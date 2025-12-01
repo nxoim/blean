@@ -1,0 +1,4 @@
+-dontwarn org.slf4j.impl.StaticLoggerBinder
+-dontwarn java.awt.event.ActionListener
+-dontwarn javax.swing.SwingUtilities
+-dontwarn javax.swing.Timer

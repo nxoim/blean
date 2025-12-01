@@ -1,0 +1,10 @@
+[versions]
+android-minSdk = "24"
+android-targetSdk = "36"
+
+jvm-javaVersion = "21"
+jvm-jdkVersion = "21"
+
+appId = "com.nxoim.blean"
+baseAppVersionString = "1.0.0"
+baseAppVersionNumber = "3"
