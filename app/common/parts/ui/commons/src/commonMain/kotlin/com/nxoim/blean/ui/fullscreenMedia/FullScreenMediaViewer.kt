@@ -9,12 +9,7 @@ import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animate
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.gestures.draggable2D
-import androidx.compose.foundation.gestures.rememberDraggable2DState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
@@ -34,7 +29,6 @@ import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -51,8 +45,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.round
 import androidx.compose.ui.zIndex
@@ -62,9 +57,12 @@ import com.nxoim.blean.composeVideoPlayer.PlaybackState
 import com.nxoim.blean.composeVideoPlayer.PlayerState
 import com.nxoim.blean.composeVideoPlayer.VideoPlayer
 import com.nxoim.blean.composeVideoPlayer.rememberVideoPlayer
+import com.nxoim.blean.ui.composeMaterial3Extensions.ExpressiveBoundsTransform
 import com.nxoim.blean.ui.composeMaterial3Extensions.GenericMediaError
 import com.nxoim.blean.ui.composeMaterial3Extensions.GenericMediaErrorDetailsContainer
 import com.nxoim.blean.ui.composeMaterial3Extensions.MediaSharedBoundsTransition
+import com.nxoim.blean.ui.composeMaterial3Extensions.scaleInWithFade
+import com.nxoim.blean.ui.composeMaterial3Extensions.scaleOutWithFade
 import com.nxoim.blean.ui.composeUiCommons.CombinedSharedTransitionScope
 import com.nxoim.blean.ui.composeUiCommons.coilImageRequest
 import com.nxoim.blean.ui.composeUiCommons.modifiers.offsetWithMotionFrameOfReference
@@ -83,16 +81,10 @@ fun FullScreenMediaViewer(
     onMediaSharedElementKeyRequest: (of: FullScreenMedia) -> String,
     modifier: Modifier = Modifier,
     playbackStateTransitionSpec: AnimatedContentTransitionScope<*>.() -> ContentTransform = run {
-        val motionScheme = MaterialTheme.motionScheme
+        val enter = scaleInWithFade()
+        val exit = scaleOutWithFade()
 
-        {
-            (fadeIn(animationSpec = motionScheme.slowEffectsSpec()) +
-                    scaleIn(
-                        initialScale = 0.92f,
-                        animationSpec = motionScheme.slowSpatialSpec()
-                    ))
-                .togetherWith(fadeOut(animationSpec = motionScheme.fastEffectsSpec()))
-        }
+        return@run { enter togetherWith exit }
     }
 ) {
     val pagerState = rememberPagerState(mediaContent.indexOf(firstSelected)) { mediaContent.size }
@@ -199,7 +191,10 @@ private fun FullScreenMediaViewerContent(
     onDismissed: () -> Unit,
     onMediaSharedElementKeyRequest: (of: FullScreenMedia) -> String,
     playbackStateTransitionSpec: AnimatedContentTransitionScope<*>.() -> ContentTransform,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    gesturesEnabled: Boolean = sharedElementScope
+        ?.let { it.visibility.transition.targetState != EnterExitState.PostExit }
+        ?: true
 ) {
     Box {
         DraggablePager(
@@ -209,7 +204,8 @@ private fun FullScreenMediaViewerContent(
             onDismissed = onDismissed,
             onMediaSharedElementKeyRequest = onMediaSharedElementKeyRequest,
             modifier = modifier,
-            playbackStateTransitionSpec = playbackStateTransitionSpec
+            playbackStateTransitionSpec = playbackStateTransitionSpec,
+            gesturesEnabled = gesturesEnabled
         )
         DismissButton(onDismissed)
     }
@@ -224,26 +220,27 @@ private fun DraggablePager(
     onDismissed: () -> Unit,
     onMediaSharedElementKeyRequest: (of: FullScreenMedia) -> String,
     modifier: Modifier = Modifier,
-    playbackStateTransitionSpec: AnimatedContentTransitionScope<*>.() -> ContentTransform
+    playbackStateTransitionSpec: AnimatedContentTransitionScope<*>.() -> ContentTransform,
+    gesturesEnabled: Boolean
 ) {
-    val offsetDismissThreshold = 64.dp
-    val velocityDismissThreshold = 4.dp
     val coroutineScope = rememberCoroutineScope()
     var offset by remember { mutableStateOf(Offset.Zero) }
+    var swipeDismissVelocityForConsumers by remember {
+        mutableStateOf(Velocity.Zero)
+    }
 
     HorizontalPager(
         state = pagerState,
+        userScrollEnabled = gesturesEnabled,
         modifier = modifier
             .swipeable(
-                detectionConstraint = SwipeConstraint.top(),
+                detectionConstraint = SwipeConstraint.vertical(),
+                isEnabled = { gesturesEnabled },
                 onStart = { },
                 onProgress = { delta, _, _ ->
                     offset += delta
                 },
-                onCancel = {
-                    onDismissed()
-                },
-                onConfirm = { velocity, _ ->
+                onCancel = { velocity ->
                     coroutineScope.launch {
                         animate(
                             typeConverter = Offset.VectorConverter,
@@ -254,6 +251,10 @@ private fun DraggablePager(
                             offset = value
                         }
                     }
+                },
+                onConfirm = { velocity, _ ->
+                    swipeDismissVelocityForConsumers = velocity
+                    onDismissed()
                 }
             )
             .fillMaxSize(),
@@ -267,7 +268,8 @@ private fun DraggablePager(
             isFocused = isFocused,
             onMediaSharedElementKeyRequest = onMediaSharedElementKeyRequest,
             offset = offset,
-            playbackStateTransitionSpec = playbackStateTransitionSpec
+            playbackStateTransitionSpec = playbackStateTransitionSpec,
+            swipeDismissVelocity = swipeDismissVelocityForConsumers
         )
     }
 }
@@ -281,7 +283,8 @@ private fun MediaPage(
     isFocused: Boolean,
     onMediaSharedElementKeyRequest: (of: FullScreenMedia) -> String,
     offset: Offset,
-    playbackStateTransitionSpec: AnimatedContentTransitionScope<*>.() -> ContentTransform
+    playbackStateTransitionSpec: AnimatedContentTransitionScope<*>.() -> ContentTransform,
+    swipeDismissVelocity: Velocity
 ) {
     val sharedTransitionModifier = Modifier
         .offsetWithMotionFrameOfReference { offset.round() }
@@ -290,15 +293,26 @@ private fun MediaPage(
                 it
             } else {
                 with(sharedElementScope) {
+                    val sharedContentState = rememberSharedContentState(
+                        onMediaSharedElementKeyRequest(content)
+                    ).apply {
+                        // always apply velocity when we know for sure
+                        // the state was attached to the modifier,
+                        // which is guaranteed when this condition is
+                        // true. otherwise theres a crash
+                        remember(swipeDismissVelocity) {
+                            if (isMatchFound) prepareTransitionWithInitialVelocity(swipeDismissVelocity)
+                        }
+                    }
+
                     it.sharedBounds(
-                        rememberSharedContentState(
-                            onMediaSharedElementKeyRequest(content)
-                        ),
+                        sharedContentState,
                         enter = MediaSharedBoundsTransition.Overlay.enter,
                         exit = MediaSharedBoundsTransition.Overlay.exit,
                         resizeMode = SharedTransitionScope.ResizeMode.scaleToBounds(
                             ContentScale.Crop
                         ),
+                        boundsTransform = ExpressiveBoundsTransform
                     )
                 }
             }
@@ -425,26 +439,23 @@ private fun VideoControlsWithSettings(
     val visible = (player.state as? PlayerState.Initialized)
         ?.let { initializedPlayerState ->
             val state = initializedPlayerState.controller.playbackState
+            val isPaused = state is PlaybackState.Stopped.ByUser
 
-            if (state is PlaybackState.Stopped.ByUser) {
-                true
-            } else {
-                val playbackHasIssues = (player.state as? PlayerState.Initialized)
-                    ?.let { it.controller.playbackState is PlaybackState.Stopped.ByError }
-                    ?: false
+            val playbackHasIssues = (player.state as? PlayerState.Initialized)
+                ?.let { it.controller.playbackState is PlaybackState.Stopped.ByError }
+                ?: false
 
-                val isIdle = userIdlingDetectionState.isIdle
-                // of composable, not the video
-                val firstFrameRendered by produceState(false) {
-                    withFrameNanos { }
-                    value = true
-                }
-                val isExiting = sharedElementScope
-                    ?.let { it.transition.targetState != EnterExitState.Visible }
-                    ?: (sharedElementScope?.visibility?.transition?.targetState != EnterExitState.Visible)
-
-                !playbackHasIssues && !isIdle && firstFrameRendered && !isExiting
+            val isIdle = userIdlingDetectionState.isIdle
+            // of composable, not the video
+            val firstFrameRendered by produceState(false) {
+                withFrameNanos { }
+                value = true
             }
+            val isExiting = sharedElementScope
+                ?.let { it.transition.targetState == EnterExitState.PostExit }
+                ?: false
+
+            (isPaused && !isExiting && firstFrameRendered) || (!playbackHasIssues && !isIdle && firstFrameRendered && !isExiting)
         }
         ?: false
 

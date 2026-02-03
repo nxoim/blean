@@ -45,6 +45,7 @@ import com.nxoim.blean.postRelatedCommons.models.UserInteractionInfo
 import com.nxoim.blean.postRelatedCommons.models.optimisticIsLiked
 import com.nxoim.blean.postRelatedCommons.models.optimisticIsReposted
 import com.nxoim.blean.postRelatedCommons.models.userInteractionInfo
+import com.nxoim.blean.ui.composeMaterial3Extensions.ExpressiveBoundsTransform
 import com.nxoim.blean.ui.composeMaterial3Extensions.MediaSharedBoundsTransition
 import com.nxoim.blean.ui.composeUiCommons.CombinedSharedTransitionScope
 import com.nxoim.blean.ui.composeUiCommons.Layout
@@ -449,6 +450,7 @@ private fun MediaPreview(
                         enter = MediaSharedBoundsTransition.NoOverlay.enter,
                         exit = MediaSharedBoundsTransition.NoOverlay.exit,
                         renderInOverlayDuringTransition = false,
+                        boundsTransform = ExpressiveBoundsTransform,
                         resizeMode =
                             if (mediaContent is PostMediaContent.ImageWithCDNLinks)
                                 SharedTransitionScope.ResizeMode.RemeasureToBounds
