@@ -112,6 +112,14 @@ sealed interface UserPreference {
     }
 
     @Serializable
+    @SerialName("app.bsky.actor.defs#declaredAgePref")
+    data class DeclaredAge(
+        val isOverAge13: Boolean,
+        val isOverAge16: Boolean,
+        val isOverAge18: Boolean
+    ) : UserPreference
+
+    @Serializable
     @SerialName("app.bsky.actor.defs#labelersPref")
     data class Labelers(
         val labelers: List<Labeler>? = null

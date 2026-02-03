@@ -15,7 +15,7 @@ private var bruh: AuthenticationContext.AccessJwt? = null
 suspend fun SessionApi.getDefaultApiToken(onCreatedSession: (CreatedSession) -> Unit = {}): AuthenticationContext.AccessJwt =
     bruh ?: run {
         bruh = createNewSessionWithLoginPassword(bskyloginSecret, bskypasswordSecret)
-            .onFailure { error("failed to get access jwt for test session") }
+            .onFailure { error("failed to get access jwt for test session. \n$it") }
             .map { session ->
                 onCreatedSession(session)
 

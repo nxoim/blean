@@ -54,7 +54,7 @@ data class OAuthTestSession(
 
 class OAuthApiTests {
     val httpClient = createTestClient()
-    val oauthApi = OAuthApi(httpClient.value)
+    val oauthApi = OAuthApi(httpClient)
     val accountApi = AccountApi(httpClient.value)
 
     // step 1
