@@ -16,9 +16,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -57,28 +54,33 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastRoundToInt
+import com.nxoim.blean.commonThingsDumpster.cancelChildren
 import com.nxoim.blean.composeVideoPlayer.PlaybackState
 import com.nxoim.blean.ui.composeUiCommons.Layout
 import com.nxoim.blean.ui.composeUiCommons.modifiers.offsetWithMotionFrameOfReference
-import kotlinx.coroutines.cancelChildren
+import com.nxoim.blean.ui.composeUiCommons.modifiers.swipeable.SwipeConstraint
+import com.nxoim.blean.ui.composeUiCommons.modifiers.swipeable.swipeable
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -92,7 +94,8 @@ class VideoControlsState(
 fun rememberVideoControlsState() = remember { VideoControlsState() }
 
 @OptIn(
-    ExperimentalMaterial3ExpressiveApi::class, ExperimentalMaterial3Api::class,
+    ExperimentalMaterial3ExpressiveApi::class,
+    ExperimentalMaterial3Api::class,
     ExperimentalSharedTransitionApi::class
 )
 @Composable
@@ -187,16 +190,27 @@ fun VideoControls(
                 }
             } else {
                 val coroutineScope = rememberCoroutineScope()
-                val assumedLayoutWidth = with(LocalDensity.current) { 300.dp.roundToPx() }
-                var layoutWidthPx by remember { mutableStateOf(assumedLayoutWidth) }
-                val dragSensitivity = layoutWidthPx.toFloat()
 
-                val preciseSlideModifier = Modifier.draggable(
-                    orientation = Orientation.Horizontal,
-                    state = rememberDraggableState {
-                        val addedFraction = it / dragSensitivity
-                        val addedFractionInMillis = maxDurationMillis * addedFraction
-                        expectedUserChosenDuration += addedFractionInMillis.toLong().milliseconds
+                // prevents weird behavior like
+                // the on start lambda recreating on each recomposition???????
+                val elapsed by rememberUpdatedState(elapsed)
+
+                val preciseSlideModifier = Modifier.swipeable(
+                    detectionConstraint = SwipeConstraint.horizontal(),
+                    interactionSource = interactionSource,
+                    activationRequireUnconsumed = false,
+                    activationDetectionPass = PointerEventPass.Main,
+                    onStart = {
+                        coroutineScope.cancelChildren()
+                        expectedUserChosenDuration = elapsed
+                    },
+                    onProgress = { delta, uptimeMillis, direction ->
+                        val surfaceWidth = this.pointerInputScopeSize.width.toFloat()
+                        val addedFraction = delta.x / surfaceWidth
+                        val addedMillis = maxDurationMillis * addedFraction
+
+                        expectedUserChosenDuration += addedMillis.toLong().milliseconds
+
                         if (expectedUserChosenDuration <= Duration.ZERO || expectedUserChosenDuration >= duration) {
                             val overshootRatio = when {
                                 expectedUserChosenDuration < Duration.ZERO -> {
@@ -208,35 +222,41 @@ fun VideoControls(
                                 }
                             }
 
-                            overshootOffsetX = (overshootRatio * layoutWidthPx) * 0.3f
+                            overshootOffsetX = (overshootRatio * surfaceWidth) * 0.3f
                         }
                     },
-                    interactionSource = interactionSource,
-                    onDragStarted = {
-                        coroutineScope.coroutineContext.cancelChildren()
-                        expectedUserChosenDuration = elapsed
-                    },
-                    onDragStopped = {
-                        onNewDurationRequested(
-                            expectedUserChosenDuration
-                                .coerceIn(Duration.ZERO, duration)
-                        )
+                    onCancel = {
                         if (overshootOffsetX != 0f) coroutineScope.launch {
                             animate(
                                 initialValue = overshootOffsetX,
                                 targetValue = 0f,
                                 animationSpec = overshootAnimationSpec,
-                                initialVelocity = it
+                                initialVelocity = it.x
                             ) { value, velocity ->
                                 overshootOffsetX = value
                             }
                         }
                     },
+                    onConfirm = { velocity, direction ->
+                        val coercedDuration = expectedUserChosenDuration.coerceIn(Duration.ZERO, duration)
+
+                        onNewDurationRequested(coercedDuration)
+
+                        if (overshootOffsetX != 0f) coroutineScope.launch {
+                            animate(
+                                initialValue = overshootOffsetX,
+                                targetValue = 0f,
+                                animationSpec = overshootAnimationSpec,
+                                initialVelocity = velocity.x
+                            ) { value, _ ->
+                                overshootOffsetX = value
+                            }
+                        }
+                    }
                 )
 
                 Row(
-                    modifier = Modifier
-                        .then(preciseSlideModifier)
+                    modifier = preciseSlideModifier
                         .padding(8.dp)
                         .fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -286,7 +306,6 @@ fun VideoControls(
                         },
                         valueRange = 0f..maxDurationMillis,
                         modifier = Modifier
-                            .onSizeChanged() { layoutWidthPx = it.width }
                             .weight(1f)
                             .fillMaxWidth(),
                         interactionSource = interactionSource,
