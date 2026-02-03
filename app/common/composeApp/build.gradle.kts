@@ -12,11 +12,12 @@ val composeAppFrameworkName = "ComposeApp"
 
 kotlin {
     jvm("desktop")
-    androidTarget()
+    androidLibrary {
+        configureAndroidAppAsLibrary(project)
+    }
     val xcf = XCFramework(composeAppFrameworkName)
 
     listOf(
-        iosX64(),
         iosArm64(),
         iosSimulatorArm64()
     ).forEach { iosTarget ->
@@ -42,16 +43,18 @@ kotlin {
         androidMain.dependencies {
             api(libs.androidx.activity.compose)
             implementation(libs.ktor.clientCio)
-            implementation(compose.uiTooling)
+            implementation(libs.compose.uiTooling)
         }
         commonMain.dependencies {
-            implementation(compose.runtime)
-            implementation(compose.foundation)
-            implementation(compose.material3)
-            implementation(compose.ui)
-            implementation(compose.components.resources)
-            implementation(compose.animationGraphics)
-            implementation(compose.components.uiToolingPreview)
+            implementation(libs.compose.runtime)
+            implementation(libs.compose.foundation)
+            implementation(libs.compose.material3)
+            implementation(libs.androidx.lifecycle.runtime.compose)
+            implementation(libs.androidxCollection)
+            implementation(libs.compose.ui)
+            implementation(libs.compose.components.resources)
+            implementation(libs.compose.animationGraphics)
+            implementation(libs.compose.preview)
 //            implementation(libs.androidx.lifecycle.viewmodel)
 //            implementation(libs.androidx.lifecycle.runtime.compose)
 //            implementation(project(":ui-components"))
@@ -84,16 +87,15 @@ kotlin {
             implementation(projects.composeVideoPlayer)
 
             implementation(libs.composeGraphicsShapes)
-            implementation(compose.materialIconsExtended)
+            implementation(libs.compose.materialIconsExtended)
             implementation(projects.app.common.parts.ui.commons)
             implementation(projects.app.common.parts.ui.screens.content)
             implementation(projects.app.common.parts.ui.screens.authentication.login)
         }
         desktopMain.dependencies {
-            implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutines.swing)
             implementation(libs.ktor.clientCio)
-            implementation(compose.preview)
+            implementation(libs.compose.preview)
         }
         iosMain.dependencies {
             api(libs.essentyLifecycle)
@@ -105,8 +107,3 @@ kotlin {
 }
 
 generateDefaultBuildConfigAndSetModuleAsReceiver()
-
-android {
-    configureAndroidAppAsLibrary(project)
-}
-

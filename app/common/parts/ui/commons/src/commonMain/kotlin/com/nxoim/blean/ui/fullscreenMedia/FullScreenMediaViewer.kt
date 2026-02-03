@@ -68,6 +68,8 @@ import com.nxoim.blean.ui.composeMaterial3Extensions.MediaSharedBoundsTransition
 import com.nxoim.blean.ui.composeUiCommons.CombinedSharedTransitionScope
 import com.nxoim.blean.ui.composeUiCommons.coilImageRequest
 import com.nxoim.blean.ui.composeUiCommons.modifiers.offsetWithMotionFrameOfReference
+import com.nxoim.blean.ui.composeUiCommons.modifiers.swipeable.SwipeConstraint
+import com.nxoim.blean.ui.composeUiCommons.modifiers.swipeable.swipeable
 import kotlinx.coroutines.launch
 
 // TODO custom zoom
@@ -224,39 +226,33 @@ private fun DraggablePager(
     modifier: Modifier = Modifier,
     playbackStateTransitionSpec: AnimatedContentTransitionScope<*>.() -> ContentTransform
 ) {
-    val density = LocalDensity.current
     val offsetDismissThreshold = 64.dp
     val velocityDismissThreshold = 4.dp
     val coroutineScope = rememberCoroutineScope()
     var offset by remember { mutableStateOf(Offset.Zero) }
-    val draggable2DState = rememberDraggable2DState { offset += it }
 
     HorizontalPager(
         state = pagerState,
         modifier = modifier
-            .draggable2D(
-                draggable2DState,
-                onDragStopped = { velocity ->
-                    with(density) {
-                        val offsetThresholdMet = offsetDismissThreshold.toPx()
-                            .let { offset.y > it || offset.y < -it }
-
-                        val velocityThresholdMet = velocityDismissThreshold.toPx()
-                            .let { velocity.y > it || velocity.y < -it }
-
-                        if (offsetThresholdMet || velocityThresholdMet)
-                            onDismissed()
-                        else
-                            coroutineScope.launch {
-                                animate(
-                                    typeConverter = Offset.VectorConverter,
-                                    initialValue = offset,
-                                    targetValue = Offset.Zero,
-                                    initialVelocity = Offset(0f, velocity.y)
-                                ) { value, _ ->
-                                    offset = value
-                                }
-                            }
+            .swipeable(
+                detectionConstraint = SwipeConstraint.top(),
+                onStart = { },
+                onProgress = { delta, _, _ ->
+                    offset += delta
+                },
+                onCancel = {
+                    onDismissed()
+                },
+                onConfirm = { velocity, _ ->
+                    coroutineScope.launch {
+                        animate(
+                            typeConverter = Offset.VectorConverter,
+                            initialValue = offset,
+                            targetValue = Offset.Zero,
+                            initialVelocity = Offset(0f, velocity.y)
+                        ) { value, _ ->
+                            offset = value
+                        }
                     }
                 }
             )
@@ -300,7 +296,7 @@ private fun MediaPage(
                         ),
                         enter = MediaSharedBoundsTransition.Overlay.enter,
                         exit = MediaSharedBoundsTransition.Overlay.exit,
-                        resizeMode = SharedTransitionScope.ResizeMode.ScaleToBounds(
+                        resizeMode = SharedTransitionScope.ResizeMode.scaleToBounds(
                             ContentScale.Crop
                         ),
                     )

@@ -8,10 +8,9 @@ plugins {
 
 kotlin {
     jvm()
-    androidTarget {
-        publishLibraryVariants("release")
+    androidLibrary {
+        configureAndroidLibrary(project)
     }
-    iosX64()
     iosArm64()
     iosSimulatorArm64()
 
@@ -28,10 +27,10 @@ kotlin {
         }
         val commonMain by getting {
             dependencies {
-                implementation(compose.runtime)
-                implementation(compose.foundation)
-                implementation(compose.ui)
-                implementation(compose.components.resources)
+                implementation(libs.compose.runtime)
+                implementation(libs.compose.foundation)
+                implementation(libs.compose.ui)
+                implementation(libs.compose.components.resources)
 //                implementation(libs.ktor.clientSerializationJson)
                 implementation(libs.kotlinx.datetime)
                 api(libs.kotlinResult)
@@ -50,17 +49,12 @@ kotlin {
             }
         }
         jvmMain.dependencies {
-            implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutines.swing)
 //            implementation(libs.ktor.clientCio)
-            implementation(compose.preview)
+            implementation(libs.compose.preview)
         }
         appleMain.dependencies {
 //            implementation(libs.ktor.clientDarwin)
         }
     }
-}
-
-android {
-    configureAndroidLibrary(project, compose = true)
 }

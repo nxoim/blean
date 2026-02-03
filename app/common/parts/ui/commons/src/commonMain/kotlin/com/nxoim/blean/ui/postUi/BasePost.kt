@@ -453,7 +453,7 @@ private fun MediaPreview(
                             if (mediaContent is PostMediaContent.ImageWithCDNLinks)
                                 SharedTransitionScope.ResizeMode.RemeasureToBounds
                             else
-                                SharedTransitionScope.ResizeMode.ScaleToBounds(
+                                SharedTransitionScope.ResizeMode.scaleToBounds(
                                     ContentScale.Crop
                                 )
                     )

@@ -1,4 +1,4 @@
-import com.android.build.gradle.internal.dsl.BaseAppModuleExtension
+import com.android.build.api.dsl.ApplicationExtension
 import org.gradle.api.Project
 import java.io.File
 import java.util.Base64
@@ -17,7 +17,7 @@ import java.util.Base64
  *
  * Works in local.properties, environment variables, and -P Gradle props.
  */
-inline fun BaseAppModuleExtension.setupAndroidAppSigning(
+inline fun ApplicationExtension.setupAndroidAppSigning(
     project: Project,
     signingConfigName: String = "release"
 ): Boolean = with(project) {
@@ -58,7 +58,7 @@ inline fun BaseAppModuleExtension.setupAndroidAppSigning(
 }
 
 @PublishedApi
-internal inline fun BaseAppModuleExtension.configureAndroidSigning(
+internal inline fun ApplicationExtension.configureAndroidSigning(
     configName: String,
     keystoreFile: File,
     storePassword: String,

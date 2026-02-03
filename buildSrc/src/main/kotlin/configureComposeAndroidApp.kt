@@ -1,8 +1,9 @@
+import com.android.build.api.dsl.ApplicationExtension
 import com.android.build.gradle.internal.dsl.BaseAppModuleExtension
 import org.gradle.api.Project
 import org.gradle.kotlin.dsl.get
 
-inline fun BaseAppModuleExtension.configureComposeAndroidApp(
+inline fun ApplicationExtension.configureComposeAndroidApp(
     project: Project,
     isDebug: Boolean
 ) = configureComposeAndroidApp(
@@ -13,7 +14,7 @@ inline fun BaseAppModuleExtension.configureComposeAndroidApp(
     isDebug
 )
 
-inline fun BaseAppModuleExtension.configureComposeAndroidApp(
+inline fun ApplicationExtension.configureComposeAndroidApp(
     project: Project,
     applicationId: String,
     versionCode: Int,
@@ -38,10 +39,6 @@ inline fun BaseAppModuleExtension.configureComposeAndroidApp(
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
-
-    sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
-    sourceSets["main"].res.srcDirs("src/androidMain/res")
-    sourceSets["main"].resources.srcDirs("src/commonMain/resources")
 
     buildTypes {
         if (isDebug) {

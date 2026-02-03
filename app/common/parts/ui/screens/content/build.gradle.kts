@@ -8,10 +8,10 @@ plugins {
 
 kotlin {
     jvm("desktop")
-    androidTarget()
-
+    androidLibrary {
+        configureAndroidLibrary(project)
+    }
     listOf(
-        iosX64(),
         iosArm64(),
         iosSimulatorArm64()
     )
@@ -21,16 +21,18 @@ kotlin {
 
         androidMain.dependencies {
             api(libs.androidx.activity.compose)
-            implementation(compose.uiTooling)
+            implementation(libs.compose.uiTooling)
         }
         commonMain.dependencies {
-            implementation(compose.runtime)
-            implementation(compose.foundation)
-            implementation(compose.material3)
-            implementation(compose.ui)
-            implementation(compose.components.resources)
-            implementation(compose.animationGraphics)
-            implementation(compose.components.uiToolingPreview)
+            implementation(libs.compose.runtime)
+            implementation(libs.compose.foundation)
+            implementation(libs.androidx.lifecycle.runtime.compose)
+            implementation(libs.androidxCollection)
+            implementation(libs.compose.material3)
+            implementation(libs.compose.ui)
+            implementation(libs.compose.components.resources)
+            implementation(libs.compose.animationGraphics)
+            implementation(libs.compose.preview)
             implementation(libs.filekit)
 
             implementation(libs.coil.network.ktor)
@@ -46,19 +48,14 @@ kotlin {
             implementation(projects.composeVideoPlayer)
 
             implementation(libs.composeGraphicsShapes)
-            implementation(compose.materialIconsExtended)
+            implementation(libs.compose.materialIconsExtended)
 
             api(projects.app.common.parts.postRelatedCommons)
             implementation(projects.app.common.parts.ui.commons)
         }
         desktopMain.dependencies {
-            implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutines.swing)
-            implementation(compose.preview)
+            implementation(libs.compose.preview)
         }
     }
-}
-
-android {
-    configureAndroidLibrary(project, compose = true)
 }

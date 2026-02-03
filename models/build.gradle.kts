@@ -9,8 +9,9 @@ plugins {
 
 kotlin {
     jvm()
-    androidTarget()
-    iosX64()
+    androidLibrary {
+        configureAndroidLibrary(project)
+    }
     iosArm64()
     iosSimulatorArm64()
 
@@ -23,7 +24,7 @@ kotlin {
 
         val commonMain by getting {
             dependencies {
-                implementation(compose.runtime)
+                implementation(libs.compose.runtime)
 
                 implementation(libs.kotlinx.datetime)
                 implementation(libs.ktor.clientSerializationJson)
@@ -45,8 +46,4 @@ kotlin {
             }
         }
     }
-}
-
-android {
-    configureAndroidLibrary(project, compose = false)
 }

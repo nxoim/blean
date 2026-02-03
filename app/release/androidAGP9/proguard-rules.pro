@@ -1,0 +1,1 @@
+#empty. proguard rules must be set in ":app:common:composeApp's consumer-proguard-rules.pro

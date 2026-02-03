@@ -70,8 +70,12 @@ inline fun Project.generateAppBuildConfig(
         // we need to include the variants build config
         if (receiverModules.isEmpty()) includeBuildConfigInTheSourceSet()
 
-        tasks.named("preBuild") {
-            dependsOn(copyToReceiverModulesTask)
+        // bruteforce way but ok. at least we dont need to know
+        // which task specifically is the first one
+        tasks.forEach {
+            if (it.name != copyToReceiverModulesTask.name) {
+                it.dependsOn(copyToReceiverModulesTask)
+            }
         }
     } else {
         // only set up the source set for receiver modules.

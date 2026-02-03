@@ -8,25 +8,23 @@ plugins {
 
 kotlin {
     jvm()
-    androidTarget()
-    iosX64()
+    androidLibrary {
+        configureAndroidLibrary(project)
+    }
     iosArm64()
     iosSimulatorArm64()
     mingwX64()
-    macosX64()
     macosArm64()
     linuxX64()
     linuxArm64()
     tvosArm64()
-    tvosX64()
     watchosArm32()
     watchosArm64()
-    watchosX64()
 
     sourceSets {
         val commonMain by getting {
             dependencies {
-                implementation(compose.runtime)
+                implementation(libs.compose.runtime)
 
                 implementation(libs.kotlinx.datetime)
                 implementation(libs.ktor.clientSerializationJson)
@@ -47,8 +45,4 @@ kotlin {
             }
         }
     }
-}
-
-android {
-    configureAndroidLibrary(project, compose = false)
 }

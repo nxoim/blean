@@ -16,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.nxoim.blean.composeVideoPlayer.PlayerState
 import com.nxoim.blean.composeVideoPlayer.VideoPlayer
@@ -23,7 +24,6 @@ import com.nxoim.blean.composeVideoPlayer.VideoSettings
 import com.nxoim.blean.composeVideoPlayer._FakeHLSController
 import com.nxoim.blean.composeVideoPlayer._FakePlaybackController
 import com.nxoim.blean.composeVideoPlayer._FakeVideoPlayer
-import org.jetbrains.compose.ui.tooling.preview.Preview
 
 @Composable
 fun FullscreenMediaVideoOptions(

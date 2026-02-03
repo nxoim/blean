@@ -9,8 +9,9 @@ plugins {
 
 kotlin {
     jvm()
-    androidTarget()
-    iosX64()
+    androidLibrary {
+        configureAndroidLibrary(project)
+    }
     iosArm64()
     iosSimulatorArm64()
 
@@ -23,7 +24,7 @@ kotlin {
 
         val commonMain by getting {
             dependencies {
-                implementation(compose.runtime)
+                implementation(libs.compose.runtime)
                 implementation(libs.kotlinx.coroutines.core)
                 api(projects.api)
                 implementation(libs.okio)
@@ -61,7 +62,4 @@ kotlin {
 dependencies {
     ksp(libs.roomCompiler)
 //    add("kspCommonMainMetadata", libs.roomCompiler)
-}
-android {
-    configureAndroidLibrary(project, compose = false)
 }

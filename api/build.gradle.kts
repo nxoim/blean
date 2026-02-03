@@ -6,9 +6,10 @@ plugins {
 
 kotlin {
     jvm()
-    androidTarget()
+    androidLibrary {
+        configureAndroidLibrary(project)
+    }
 
-    iosX64()
     iosArm64()
     iosSimulatorArm64()
     linuxX64()
@@ -48,8 +49,4 @@ kotlin {
             api(libs.ktor.clientDarwin)
         }
     }
-}
-
-android {
-    configureAndroidLibrary(project, compose = false)
 }

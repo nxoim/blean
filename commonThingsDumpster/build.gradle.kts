@@ -6,8 +6,9 @@ plugins {
 
 kotlin {
     jvm()
-    androidTarget()
-    iosX64()
+    androidLibrary {
+        configureAndroidLibrary(project)
+    }
     iosArm64()
     iosSimulatorArm64()
     linuxX64()
@@ -31,8 +32,4 @@ kotlin {
             }
         }
     }
-}
-
-android {
-    configureAndroidLibrary(project, compose = false)
 }
