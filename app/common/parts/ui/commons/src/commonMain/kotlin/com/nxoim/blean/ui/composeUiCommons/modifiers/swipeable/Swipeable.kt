@@ -5,6 +5,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -64,11 +67,13 @@ fun Modifier.swipeable(
         velocity: Velocity,
         direction: SwipeDirection
     ) -> Unit,
-    onCancel: GestureScope.() -> Unit,
+    onCancel: GestureScope.(velocity: Velocity) -> Unit,
     thresholds: SwipeThresholds = SwipeThresholds.Default,
     isEnabled: (PointerType) -> Boolean = defaultEnabled,
+    interactionSource: MutableInteractionSource? = null,
     key: Any = Unit,
-    startImmediately: Boolean = false
+    activationRequireUnconsumed: Boolean = true,
+    activationDetectionPass: PointerEventPass = PointerEventPass.Main
 ): Modifier = swipeActionInternal(
     key = key,
     thresholds = thresholds,
@@ -79,7 +84,9 @@ fun Modifier.swipeable(
     onConfirm = onConfirm,
     isEnabled = isEnabled,
     onCancel = onCancel,
-    startImmediately = startImmediately
+    interactionSource = interactionSource,
+    activationRequireUnconsumed = activationRequireUnconsumed,
+    activationDetectionPass = activationDetectionPass
 )
 
 ////////////////////////////////////////////////////////////////////////////////////////////
@@ -100,29 +107,40 @@ private fun Modifier.swipeActionInternal(
         direction: SwipeDirection
     ) -> Unit,
     isEnabled: (PointerType) -> Boolean,
-    onCancel: GestureScope.() -> Unit,
-    startImmediately: Boolean
+    onCancel: GestureScope.(velocity: Velocity) -> Unit,
+    interactionSource: MutableInteractionSource?,
+    activationRequireUnconsumed: Boolean,
+    activationDetectionPass: PointerEventPass,
 ): Modifier = pointerInput(
     key,
     thresholds,
     detectionConstraint,
     confirmationConstraint,
-    startImmediately
+    activationRequireUnconsumed,
+    activationDetectionPass,
+    onStart,
+    onProgress,
+    onConfirm,
+    onCancel,
+    interactionSource,
+    isEnabled
 ) {
     val velocityTracker = VelocityTracker()
     var totalSwipeDeltaPx = Offset.Zero
     var startedSwipingInDirection: SwipeDirection? = null
+    var dragInteraction: DragInteraction.Start? = null
 
     fun resetSwipeStates() {
         totalSwipeDeltaPx = Offset.Zero
         startedSwipingInDirection = null
         velocityTracker.resetTracking()
+        dragInteraction = null
     }
 
     with(GestureScope(this)) {
         detectDragGestures(
-            requireUnconsumed = startImmediately,
-            activationDetectionPass = if (startImmediately) PointerEventPass.Initial else PointerEventPass.Main,
+            activationRequireUnconsumed = activationRequireUnconsumed,
+            activationDetectionPass = activationDetectionPass,
             constraint = detectionConstraint,
             isEnabled = isEnabled,
             offAxisCancellationDistancePx = thresholds.offAxisCancellation.toPx(),
@@ -131,6 +149,13 @@ private fun Modifier.swipeActionInternal(
                 resetSwipeStates()
                 startedSwipingInDirection = direction
                 velocityTracker.addPointerInputChange(change)
+
+                interactionSource?.let {
+                    val interaction = DragInteraction.Start()
+                    dragInteraction = interaction
+                    it.tryEmit(interaction)
+                }
+
                 onStart(direction)
                 onProgress(Offset.Zero, change.uptimeMillis, direction)
                 change.consume()
@@ -147,7 +172,14 @@ private fun Modifier.swipeActionInternal(
                 pointerChange.consume()
             },
             onDragCancel = {
-                startedSwipingInDirection?.let { onCancel() }
+                startedSwipingInDirection?.let {
+                    dragInteraction?.let {
+                        interactionSource?.tryEmit(DragInteraction.Cancel(it))
+                    }
+                    dragInteraction = null
+
+                    onCancel(velocityTracker.calculateVelocity())
+                }
             },
             onDragEnd = {
                 startedSwipingInDirection?.let {
@@ -157,8 +189,22 @@ private fun Modifier.swipeActionInternal(
                         constraint = confirmationConstraint,
                         confirmationVelocityPxPerMs = thresholds.confirmationVelocity.toPx(),
                         confirmationMinDistancePx = thresholds.confirmationMinDistance.toPx(),
-                        onConfirm = onConfirm,
-                        onCancel = onCancel
+                        onConfirm = { velocity, direction ->
+                            dragInteraction?.let {
+                                interactionSource?.tryEmit(DragInteraction.Stop(it))
+                            }
+                            dragInteraction = null
+
+                            onConfirm(velocity, direction)
+                        },
+                        onCancel = {
+                            dragInteraction?.let {
+                                interactionSource?.tryEmit(DragInteraction.Cancel(it))
+                            }
+                            dragInteraction = null
+
+                            onCancel(it)
+                        }
                     )
                 }
             }
@@ -176,7 +222,7 @@ private inline fun GestureScope.handleDragEnd(
         velocity: Velocity,
         direction: SwipeDirection
     ) -> Unit,
-    onCancel: GestureScope.() -> Unit
+    onCancel: GestureScope.(velocity: Velocity) -> Unit
 ) {
     val velocityPxPerMs = velocityTracker.calculateVelocity()
 
@@ -208,10 +254,10 @@ private inline fun GestureScope.handleDragEnd(
         if (currentSwipingDirection != null) {
             onConfirm(velocityPxPerMs, currentSwipingDirection)
         } else {
-            onCancel()
+            onCancel(velocityPxPerMs)
         }
     } else {
-        onCancel()
+        onCancel(velocityPxPerMs)
     }
 }
 
@@ -223,14 +269,14 @@ private suspend fun PointerInputScope.detectDragGestures(
     onDragEnd: (change: PointerInputChange) -> Unit,
     onDragCancel: () -> Unit = {},
     onDrag: (change: PointerInputChange, dragAmount: Offset) -> Unit,
-    requireUnconsumed: Boolean,
+    activationRequireUnconsumed: Boolean,
     activationDetectionPass: PointerEventPass,
     isEnabled: (PointerType) -> Boolean
 ) {
     val activationVelocityTracker = VelocityTracker()
 
     awaitEachGesture {
-        val down = awaitFirstDown(requireUnconsumed, activationDetectionPass)
+        val down = awaitFirstDown(activationRequireUnconsumed, activationDetectionPass)
 
         if (isEnabled(down.type)) {
             var overSlop = Offset.Zero
@@ -267,6 +313,7 @@ private suspend fun PointerInputScope.detectDragGestures(
         }
     }
 }
+
 private suspend inline fun AwaitPointerEventScope.awaitTouchSlopOrCancellation(
     pointerId: PointerId,
     constraint: SwipeConstraint,
@@ -416,6 +463,8 @@ private fun SwipeableCardPreview() {
     var swipeDelta by remember { mutableStateOf(Offset.Zero) }
     var confirmed by remember { mutableStateOf(false) }
     var wrongDirection by remember { mutableStateOf(false) }
+    val interactionSource = remember { MutableInteractionSource() }
+    val isDragging by interactionSource.collectIsDraggedAsState()
 
     Box(
         modifier = Modifier
@@ -423,13 +472,15 @@ private fun SwipeableCardPreview() {
             .shadow(20.dp, RoundedCornerShape(20.dp))
             .clip(RoundedCornerShape(20.dp))
             .background(
-                if (confirmed)
-                    MaterialTheme.colorScheme.tertiaryContainer
-                else
-                    MaterialTheme.colorScheme.primaryContainer
+                when {
+                    confirmed -> MaterialTheme.colorScheme.tertiaryContainer
+                    isDragging -> MaterialTheme.colorScheme.secondaryContainer
+                    else -> MaterialTheme.colorScheme.primaryContainer
+                }
             )
             .swipeable(
                 detectionConstraint = SwipeConstraint.horizontal(),
+                interactionSource = interactionSource,
                 onStart = {
                     confirmed = false
                     wrongDirection = true
@@ -446,6 +497,7 @@ private fun SwipeableCardPreview() {
             .swipeable(
                 detectionConstraint = SwipeConstraint.vertical(),
                 confirmationConstraint = SwipeConstraint.top(),
+                interactionSource = interactionSource,
                 onStart = {
                     swipeDelta = Offset.Zero
                     confirmed = false
@@ -468,7 +520,11 @@ private fun SwipeableCardPreview() {
                 Text("Wrong direction")
             } else {
                 Text(
-                    text = if (confirmed) "Confirmed" else "Swipe Up",
+                    text = when {
+                        confirmed -> "Confirmed"
+                        isDragging -> "Dragging..."
+                        else -> "Swipe Up"
+                    },
                     style = MaterialTheme.typography.headlineSmall
                 )
             }
@@ -522,4 +578,3 @@ private fun SwipeArrowIndicator(delta: Offset) {
         }
     }
 }
-
