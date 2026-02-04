@@ -15,6 +15,7 @@ inline fun KotlinMultiplatformAndroidLibraryTarget.configureAndroidLibrary(
 ) {
     this@configureAndroidLibrary.namespace = namespace
     compileSdk { version = release(AndroidBuildStuff.SDK.TARGET) }
+    minSdk { version = release(AndroidBuildStuff.SDK.MIN) }
     androidResources { enable = true }
 
 //    sourceSets["main"].resources.srcDirs("src/commonMain/resources")
