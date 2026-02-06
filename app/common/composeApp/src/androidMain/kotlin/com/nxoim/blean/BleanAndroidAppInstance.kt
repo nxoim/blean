@@ -11,11 +11,12 @@ import com.nxoim.blean.shared.appEnvironment.PathProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.plus
+import kotlinx.coroutines.launch
 
 class BleanAndroidAppInstance : Application() {
     private val coroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     val logger = Logger
+
     companion object {
         @SuppressLint("StaticFieldLeak")
         lateinit var accountManagerHolder: AccountManagerHolder
@@ -23,19 +24,20 @@ class BleanAndroidAppInstance : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        val managerHolderScope = coroutineScope.childCoroutineScope()
         accountManagerHolder = AccountManagerHolder(
             rootDataStorageUri = PathProvider.globalAppDataPath.toString() + "/root",
             rootCacheStorageUri = PathProvider.globalCachePath.toString() + "/root",
             encryptionKeyFactory = { null },
             credentialsRepositoryFactory = {
-                AndroidCredentialsRepository(
-                    context = this,
-                    logger,
-                    coroutineScope.childCoroutineScope() + Dispatchers.IO
-                )
+                AndroidCredentialsRepository(context = this, logger)
+                    .apply {
+                        // start observations immediately
+                        managerHolderScope.launch { start() }
+                    }
             },
             logger = logger,
-            coroutineScope = coroutineScope.childCoroutineScope(),
+            coroutineScope = managerHolderScope,
             baseBskyServerEndpoint = BuildConfig.Environment.defaultBskyServerEndpoint,
             baseOauthEndpoint = BuildConfig.Environment.defaultOauthEndpoint
         )
