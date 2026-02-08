@@ -41,8 +41,144 @@ import io.ktor.client.HttpClient
 import io.ktor.http.HttpMethod
 import kotlinx.serialization.json.Json
 
-class FeedApi(private val httpClient: HttpClient) {
-    suspend fun describeFeedGenerator(
+fun FeedApi(httpClient: HttpClient): FeedApi = KtorFeedApi(httpClient)
+
+interface FeedApi {
+    suspend fun describeFeedGenerator(authenticationContext: AuthenticationContext): RequestResult<DescribedFeedGenerator>
+    suspend fun getActorFeeds(
+        authenticationContext: AuthenticationContext,
+        actor: AccountIdentificator.Handle,
+        limit: LimitUpToHundred? = LimitUpToHundred(50),
+        cursor: String? = null
+    ): RequestResult<ActorFeeds>
+
+    suspend fun getActorLikes(
+        authenticationContext: AuthenticationContext,
+        actor: AccountIdentificator.Handle,
+        limit: LimitUpToHundred? = LimitUpToHundred(50),
+        cursor: String? = null
+    ): RequestResult<ActorLikes>
+
+    suspend fun getAuthorFeed(
+        authenticationContext: AuthenticationContext,
+        actor: AccountIdentificator,
+        limit: LimitUpToHundred? = LimitUpToHundred(50),
+        cursor: String? = null,
+        filter: FeedFilter? = FeedFilter.PostsWithReplies
+    ): RequestResult<Feed>
+
+    suspend fun getFeedGenerator(
+        authenticationContext: AuthenticationContext,
+        feedUri: String
+    ): RequestResult<FeedGenerator>
+
+    suspend fun getFeedGenerators(
+        authenticationContext: AuthenticationContext,
+        feedUris: List<String>
+    ): RequestResult<FeedGenerators>
+
+    suspend fun getFeedSkeleton(
+        authenticationContext: AuthenticationContext,
+        feedUri: String,
+        limit: LimitUpToHundred? = LimitUpToHundred(50),
+        cursor: String? = null
+    ): RequestResult<FeedSkeleton>
+
+    suspend fun getFeed(
+        authenticationContext: AuthenticationContext,
+        feedUri: String,
+        limit: LimitUpToHundred? = LimitUpToHundred(50),
+        cursor: String? = null
+    ): RequestResult<Feed>
+
+    suspend fun getLikes(
+        authenticationContext: AuthenticationContext,
+        postUri: AtUri,
+        cid: Cid? = null,
+        limit: LimitUpToHundred? = LimitUpToHundred(50),
+        cursor: String? = null
+    ): RequestResult<Likes>
+
+    suspend fun getListFeed(
+        authenticationContext: AuthenticationContext,
+        listUri: AtUri,
+        limit: LimitUpToHundred? = LimitUpToHundred(50),
+        cursor: String? = null
+    ): RequestResult<ListFeed>
+
+    suspend fun getPostThreadV2(
+        authenticationContext: AuthenticationContext,
+        anchor: AtUri,
+        above: Boolean = false,
+        below: Int = 6,
+        branchingFactor: Int = 10,
+        prioritizeFollowedUsers: Boolean = true,
+        sort: ThreadSort = ThreadSort.Oldest
+    ): RequestResult<ThreadV2>
+
+    suspend fun getPostThread(
+        authenticationContext: AuthenticationContext,
+        postUri: AtUri,
+        depth: Int? = 6,
+        parentHeight: Int? = 80
+    ): RequestResult<PostThread>
+
+    suspend fun getPosts(
+        authenticationContext: AuthenticationContext,
+        postUris: List<AtUri>
+    ): RequestResult<Posts>
+
+    suspend fun getQuotes(
+        authenticationContext: AuthenticationContext,
+        postUri: AtUri,
+        cid: Cid? = null,
+        limit: LimitUpToHundred? = LimitUpToHundred(50),
+        cursor: String? = null
+    ): RequestResult<Quotes>
+
+    suspend fun getRepostedBy(
+        authenticationContext: AuthenticationContext,
+        postUri: AtUri,
+        cid: Cid? = null,
+        limit: LimitUpToHundred? = LimitUpToHundred(50),
+        cursor: String? = null
+    ): RequestResult<RepostedBy>
+
+    suspend fun getTimeline(
+        authenticationContext: AuthenticationContext,
+        algorithm: String,
+        limit: LimitUpToHundred? = LimitUpToHundred(50),
+        cursor: String? = null
+    ): RequestResult<Timeline>
+
+    suspend fun searchPosts(
+        authenticationContext: AuthenticationContext,
+        query: String,
+        sort: SearchSort? = SearchSort.Latest,
+        since: String? = null,
+        until: String? = null,
+        mentions: AccountIdentificator.Handle? = null,
+        author: AccountIdentificator.Handle? = null,
+        lang: LanguageString? = null,
+        domain: String? = null,
+        url: UriString? = null,
+        tag: List<String>? = null,
+        limit: LimitUpToHundred? = LimitUpToHundred(50),
+        cursor: String? = null
+    ): RequestResult<SearchedPosts>
+
+    suspend fun sendInteractions(
+        authenticationContext: AuthenticationContext,
+        interactions: FeedInteractions,
+        acceptLabelers: List<Did> = emptyList(),
+        atprotoProxy: String = bskyAppAtprotoProxy
+    ): RequestResult<UnknownInteractions>
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////
+
+private class KtorFeedApi(private val httpClient: HttpClient) : FeedApi {
+    override suspend fun describeFeedGenerator(
         authenticationContext: AuthenticationContext
     ): RequestResult<DescribedFeedGenerator> = runRequestCatching {
         httpClient.performAuthorizedRequest(
@@ -56,11 +192,11 @@ class FeedApi(private val httpClient: HttpClient) {
         )
     }
 
-    suspend fun getActorFeeds(
+    override suspend fun getActorFeeds(
         authenticationContext: AuthenticationContext,
         actor: AccountIdentificator.Handle,
-        limit: LimitUpToHundred? = LimitUpToHundred(50),
-        cursor: String? = null
+        limit: LimitUpToHundred?,
+        cursor: String?
     ): RequestResult<ActorFeeds> = runRequestCatching {
         httpClient.performAuthorizedRequest(
             authenticationContext = authenticationContext,
@@ -77,11 +213,11 @@ class FeedApi(private val httpClient: HttpClient) {
         )
     }
 
-    suspend fun getActorLikes(
+    override suspend fun getActorLikes(
         authenticationContext: AuthenticationContext,
         actor: AccountIdentificator.Handle,
-        limit: LimitUpToHundred? = LimitUpToHundred(50),
-        cursor: String? = null
+        limit: LimitUpToHundred?,
+        cursor: String?
     ): RequestResult<ActorLikes> = runRequestCatching {
         httpClient.performAuthorizedRequest(
             authenticationContext = authenticationContext,
@@ -98,12 +234,12 @@ class FeedApi(private val httpClient: HttpClient) {
         )
     }
 
-    suspend fun getAuthorFeed(
+    override suspend fun getAuthorFeed(
         authenticationContext: AuthenticationContext,
         actor: AccountIdentificator,
-        limit: LimitUpToHundred? = LimitUpToHundred(50),
-        cursor: String? = null,
-        filter: FeedFilter? = FeedFilter.PostsWithReplies
+        limit: LimitUpToHundred?,
+        cursor: String?,
+        filter: FeedFilter?
     ): RequestResult<Feed> = runRequestCatching {
         httpClient.performAuthorizedRequest(
             authenticationContext = authenticationContext,
@@ -121,7 +257,7 @@ class FeedApi(private val httpClient: HttpClient) {
         )
     }
 
-    suspend fun getFeedGenerator(
+    override suspend fun getFeedGenerator(
         authenticationContext: AuthenticationContext,
         feedUri: String // is string because can be equal to "following"
     ): RequestResult<FeedGenerator> = runRequestCatching {
@@ -136,7 +272,7 @@ class FeedApi(private val httpClient: HttpClient) {
         )
     }
 
-    suspend fun getFeedGenerators(
+    override suspend fun getFeedGenerators(
         authenticationContext: AuthenticationContext,
         feedUris: List<String>
     ): RequestResult<FeedGenerators> = runRequestCatching {
@@ -151,11 +287,11 @@ class FeedApi(private val httpClient: HttpClient) {
         )
     }
 
-    suspend fun getFeedSkeleton(
+    override suspend fun getFeedSkeleton(
         authenticationContext: AuthenticationContext,
         feedUri: String,
-        limit: LimitUpToHundred? = LimitUpToHundred(50),
-        cursor: String? = null
+        limit: LimitUpToHundred?,
+        cursor: String?
     ): RequestResult<FeedSkeleton> = runRequestCatching {
         httpClient.performAuthorizedRequest(
             authenticationContext = authenticationContext,
@@ -172,11 +308,11 @@ class FeedApi(private val httpClient: HttpClient) {
         )
     }
 
-    suspend fun getFeed(
+    override suspend fun getFeed(
         authenticationContext: AuthenticationContext,
         feedUri: String,
-        limit: LimitUpToHundred? = LimitUpToHundred(50),
-        cursor: String? = null
+        limit: LimitUpToHundred?,
+        cursor: String?
     ): RequestResult<Feed> = runRequestCatching {
         httpClient.performAuthorizedRequest(
             authenticationContext = authenticationContext,
@@ -193,12 +329,12 @@ class FeedApi(private val httpClient: HttpClient) {
         )
     }
 
-    suspend fun getLikes(
+    override suspend fun getLikes(
         authenticationContext: AuthenticationContext,
         postUri: AtUri,
-        cid: Cid? = null,
-        limit: LimitUpToHundred? = LimitUpToHundred(50),
-        cursor: String? = null
+        cid: Cid?,
+        limit: LimitUpToHundred?,
+        cursor: String?
     ): RequestResult<Likes> = runRequestCatching {
         httpClient.performAuthorizedRequest(
             authenticationContext = authenticationContext,
@@ -216,11 +352,11 @@ class FeedApi(private val httpClient: HttpClient) {
         )
     }
 
-    suspend fun getListFeed(
+    override suspend fun getListFeed(
         authenticationContext: AuthenticationContext,
         listUri: AtUri,
-        limit: LimitUpToHundred? = LimitUpToHundred(50),
-        cursor: String? = null
+        limit: LimitUpToHundred?,
+        cursor: String?
     ): RequestResult<ListFeed> = runRequestCatching {
         httpClient.performAuthorizedRequest(
             authenticationContext = authenticationContext,
@@ -237,14 +373,14 @@ class FeedApi(private val httpClient: HttpClient) {
         )
     }
 
-    suspend fun getPostThreadV2(
+    override suspend fun getPostThreadV2(
         authenticationContext: AuthenticationContext,
         anchor: AtUri,
-        above: Boolean = false,
-        below: Int = 6,
-        branchingFactor: Int = 10,
-        prioritizeFollowedUsers: Boolean = true,
-        sort: ThreadSort = ThreadSort.Oldest
+        above: Boolean,
+        below: Int,
+        branchingFactor: Int,
+        prioritizeFollowedUsers: Boolean,
+        sort: ThreadSort
     ): RequestResult<ThreadV2> = runRequestCatching {
         require(below in threadV2PostAmountRange)
         require(branchingFactor in threadV2PostBranchingRange)
@@ -267,11 +403,11 @@ class FeedApi(private val httpClient: HttpClient) {
         )
     }
 
-    suspend fun getPostThread(
+    override suspend fun getPostThread(
         authenticationContext: AuthenticationContext,
         postUri: AtUri,
-        depth: Int? = 6,
-        parentHeight: Int? = 80
+        depth: Int?,
+        parentHeight: Int?
     ): RequestResult<PostThread> = runRequestCatching {
         if (depth != null) require(depth <= 1000) {
             "depth in getPostThread can not be more than 1000"
@@ -296,7 +432,7 @@ class FeedApi(private val httpClient: HttpClient) {
         )
     }
 
-    suspend fun getPosts(
+    override suspend fun getPosts(
         authenticationContext: AuthenticationContext,
         postUris: List<AtUri>
     ): RequestResult<Posts> = runRequestCatching {
@@ -315,12 +451,12 @@ class FeedApi(private val httpClient: HttpClient) {
         )
     }
 
-    suspend fun getQuotes(
+    override suspend fun getQuotes(
         authenticationContext: AuthenticationContext,
         postUri: AtUri,
-        cid: Cid? = null,
-        limit: LimitUpToHundred? = LimitUpToHundred(50),
-        cursor: String? = null
+        cid: Cid?,
+        limit: LimitUpToHundred?,
+        cursor: String?
     ): RequestResult<Quotes> = runRequestCatching {
         httpClient.performAuthorizedRequest(
             authenticationContext = authenticationContext,
@@ -338,12 +474,12 @@ class FeedApi(private val httpClient: HttpClient) {
         )
     }
 
-    suspend fun getRepostedBy(
+    override suspend fun getRepostedBy(
         authenticationContext: AuthenticationContext,
         postUri: AtUri,
-        cid: Cid? = null,
-        limit: LimitUpToHundred? = LimitUpToHundred(50),
-        cursor: String? = null
+        cid: Cid?,
+        limit: LimitUpToHundred?,
+        cursor: String?
     ): RequestResult<RepostedBy> = runRequestCatching {
         httpClient.performAuthorizedRequest(
             authenticationContext = authenticationContext,
@@ -361,11 +497,11 @@ class FeedApi(private val httpClient: HttpClient) {
         )
     }
 
-    suspend fun getTimeline(
+    override suspend fun getTimeline(
         authenticationContext: AuthenticationContext,
         algorithm: String, // todo algorithm as enum or something?
-        limit: LimitUpToHundred? = LimitUpToHundred(50),
-        cursor: String? = null
+        limit: LimitUpToHundred?,
+        cursor: String?
     ): RequestResult<Timeline> = runRequestCatching {
         httpClient.performAuthorizedRequest(
             authenticationContext = authenticationContext,
@@ -382,20 +518,20 @@ class FeedApi(private val httpClient: HttpClient) {
         )
     }
 
-    suspend fun searchPosts(
+    override suspend fun searchPosts(
         authenticationContext: AuthenticationContext,
         query: String,
-        sort: SearchSort? = SearchSort.Latest,
-        since: String? = null,
-        until: String? = null,
-        mentions: AccountIdentificator.Handle? = null,
-        author: AccountIdentificator.Handle? = null,
-        lang: LanguageString? = null,
-        domain: String? = null,
-        url: UriString? = null,
-        tag: List<String>? = null,
-        limit: LimitUpToHundred? = LimitUpToHundred(50),
-        cursor: String? = null
+        sort: SearchSort?,
+        since: String?,
+        until: String?,
+        mentions: AccountIdentificator.Handle?,
+        author: AccountIdentificator.Handle?,
+        lang: LanguageString?,
+        domain: String?,
+        url: UriString?,
+        tag: List<String>?,
+        limit: LimitUpToHundred?,
+        cursor: String?
     ): RequestResult<SearchedPosts> = runRequestCatching {
         if (tag != null) require(tag.any { it.length <= 640 }) {
             "tag must not contain more than 640 characters"
@@ -425,11 +561,11 @@ class FeedApi(private val httpClient: HttpClient) {
         )
     }
 
-    suspend fun sendInteractions(
+    override suspend fun sendInteractions(
         authenticationContext: AuthenticationContext,
         interactions: FeedInteractions,
-        acceptLabelers: List<Did> = emptyList(),
-        atprotoProxy: String = bskyAppAtprotoProxy,
+        acceptLabelers: List<Did>,
+        atprotoProxy: String,
     ): RequestResult<UnknownInteractions> = runRequestCatching {
         httpClient.performAuthorizedRequest(
             authenticationContext = authenticationContext,

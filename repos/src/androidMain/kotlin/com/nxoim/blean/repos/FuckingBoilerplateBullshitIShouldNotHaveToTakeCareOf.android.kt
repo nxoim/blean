@@ -64,4 +64,7 @@ class RoomProvider private constructor(/* so we surely dont intialize it manuall
     }
 }
 
+actual inline fun <reified T : RoomDatabase> inMemoryDatabaseBuilder() =
+    Room.inMemoryDatabaseBuilder<T>(RoomProvider.appContext)
+
 const val _logTag = "RoomProvider"

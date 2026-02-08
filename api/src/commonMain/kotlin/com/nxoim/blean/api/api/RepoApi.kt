@@ -23,7 +23,9 @@ import io.ktor.client.HttpClient
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpMethod
 
-class RepoApi(val httpClient: HttpClient) {
+fun RepoApi(httpClient: HttpClient): RepoApi = KtorRepoApi(httpClient)
+
+interface RepoApi {
     suspend fun createRecord(
         authenticationContext: AuthenticationContext,
         repo: Did,
@@ -33,7 +35,49 @@ class RepoApi(val httpClient: HttpClient) {
         validate: Boolean? = null,
         swapCommit: Cid? = null,
         atprotoAcceptLabelers: List<Did>? = null
-    ): RequestResult<CreateRecordResponse> = runRequestCatching {
+    ): RequestResult<CreateRecordResponse>
+
+    suspend fun deleteRecord(
+        authenticationContext: AuthenticationContext,
+        repo: Did,
+        collection: RepoCollectionNSID,
+        rkey: RecordKey,
+        swapRecord: Cid? = null,
+        swapCommit: Cid? = null,
+        atprotoAcceptLabelers: List<Did>? = null
+    ): RequestResult<DeleteRecordResponse>
+
+    suspend fun applyWrites(
+        authenticationContext: AuthenticationContext,
+        repo: Did,
+        writes: List<RecordWrite>,
+        validate: Boolean? = null,
+        swapCommit: Cid? = null,
+        atprotoAcceptLabelers: List<Did>? = null
+    ): RequestResult<ApplyWritesResponse>
+
+    suspend fun getRecord(
+        authenticationContext: AuthenticationContext,
+        repo: Did,
+        collection: RepoCollectionNSID,
+        recordKey: RecordKey,
+        cid: Cid? = null
+    ): RequestResult<GetRecordResponse>
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////
+
+class KtorRepoApi(val httpClient: HttpClient) : RepoApi {
+   override suspend fun createRecord(
+       authenticationContext: AuthenticationContext,
+       repo: Did,
+       collection: RepoCollectionNSID,
+       record: UploadRecord,
+       rkey: RecordKey?,
+       validate: Boolean?,
+       swapCommit: Cid?,
+       atprotoAcceptLabelers: List<Did>?
+   ): RequestResult<CreateRecordResponse> = runRequestCatching {
         httpClient.performAuthorizedRequest(
             authenticationContext,
             httpMethod = HttpMethod.Post,
@@ -51,16 +95,16 @@ class RepoApi(val httpClient: HttpClient) {
                 swapCommit = swapCommit
             )
         )
-    }
+   }
 
-    suspend fun deleteRecord(
+    override suspend fun deleteRecord(
         authenticationContext: AuthenticationContext,
         repo: Did,
         collection: RepoCollectionNSID,
         rkey: RecordKey,
-        swapRecord: Cid? = null,
-        swapCommit: Cid? = null,
-        atprotoAcceptLabelers: List<Did>? = null
+        swapRecord: Cid?,
+        swapCommit: Cid?,
+        atprotoAcceptLabelers: List<Did>?
     ): RequestResult<DeleteRecordResponse> = runRequestCatching {
         httpClient.performAuthorizedRequest(
             authenticationContext,
@@ -80,13 +124,13 @@ class RepoApi(val httpClient: HttpClient) {
         )
     }
 
-    suspend fun applyWrites(
+    override suspend fun applyWrites(
         authenticationContext: AuthenticationContext,
         repo: Did,
         writes: List<RecordWrite>,
-        validate: Boolean? = null,
-        swapCommit: Cid? = null,
-        atprotoAcceptLabelers: List<Did>? = null
+        validate: Boolean?,
+        swapCommit: Cid?,
+        atprotoAcceptLabelers: List<Did>?
     ): RequestResult<ApplyWritesResponse> = runRequestCatching {
         httpClient.performAuthorizedRequest(
             authenticationContext = authenticationContext,
@@ -107,12 +151,12 @@ class RepoApi(val httpClient: HttpClient) {
 
     // NOTE: could return RecordNotFound in error 400,
     // the return type might be adjusted
-    suspend fun getRecord(
+    override suspend fun getRecord(
         authenticationContext: AuthenticationContext,
         repo: Did,
         collection: RepoCollectionNSID,
         recordKey: RecordKey,
-        cid: Cid? = null
+        cid: Cid?
     ): RequestResult<GetRecordResponse> = runRequestCatching {
         httpClient.performAuthorizedRequest(
             authenticationContext = authenticationContext,

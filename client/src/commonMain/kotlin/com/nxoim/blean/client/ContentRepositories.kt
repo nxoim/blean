@@ -10,13 +10,23 @@ import okio.SYSTEM
 
 class ContentRepositories(
     private val baseContentSpecificDbUri: String,
-    encryptionKey: ByteArray?,
-    private val logger: Logger
+    private val logger: Logger,
+    private val apiResponseCacheDb: ApiResponseRoomDatabase,
+    private val mediaFileSystem: FileSystem
 ) {
-    private val apiResponseCacheDb = buildRoomDatabase<ApiResponseRoomDatabase>(
-        basePathUri = baseContentSpecificDbUri,
-        name = "apiResponseCache",
-        encryptionKey = encryptionKey
+    constructor(
+        baseContentSpecificDbUri: String,
+        encryptionKey: ByteArray?,
+        logger: Logger
+    ) : this(
+        baseContentSpecificDbUri,
+        logger,
+        buildRoomDatabase<ApiResponseRoomDatabase>(
+            basePathUri = baseContentSpecificDbUri,
+            name = "apiResponseCache",
+            encryptionKey = encryptionKey
+        ),
+        FileSystem.SYSTEM
     )
 
     val apiResponseCache = ApiResponseCache(
@@ -34,6 +44,6 @@ class ContentRepositories(
 
     fun deinitializeAndNuke() {
         deinitialize()
-        FileSystem.Companion.SYSTEM.delete(baseContentSpecificDbUri.toPath())
+        mediaFileSystem.deleteRecursively(baseContentSpecificDbUri.toPath())
     }
 }

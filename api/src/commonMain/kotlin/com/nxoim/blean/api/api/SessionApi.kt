@@ -11,14 +11,30 @@ import com.nxoim.blean.api.utils.runRequestCatching
 import io.ktor.client.HttpClient
 import io.ktor.http.headers
 
+fun SessionApi(httpClient: HttpClient): SessionApi = KtorSessionApi(httpClient)
 
-class SessionApi(
-    private val httpClient: HttpClient
-) {
+interface SessionApi {
     suspend fun createNewSessionWithLoginPassword(
         identifier: String,
         password: String,
         authFactorToken: String? = null
+    ): RequestResult<CreatedSession>
+
+    /**
+     * @param accessJwt access/bearer token
+     */
+    suspend fun getSession(accessJwt: String): RequestResult<Session>
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////
+
+private class KtorSessionApi(
+    private val httpClient: HttpClient
+) : SessionApi {
+    override suspend fun createNewSessionWithLoginPassword(
+        identifier: String,
+        password: String,
+        authFactorToken: String?
     ): RequestResult<CreatedSession> = runRequestCatching {
         httpClient.post(
             url = "/xrpc/com.atproto.server.createSession",
@@ -33,10 +49,7 @@ class SessionApi(
         )
     }
 
-    /**
-     * @param accessJwt access/bearer token
-     */
-    suspend fun getSession(
+    override suspend fun getSession(
         accessJwt: String
     ): RequestResult<Session> = runRequestCatching {
         httpClient.get(

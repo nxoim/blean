@@ -11,14 +11,25 @@ import com.nxoim.blean.bskyPrimitives.AtUri
 import io.ktor.client.HttpClient
 import io.ktor.http.HttpMethod
 
-class GraphApi(
-    private val httpClient: HttpClient
-) {
+fun GraphApi(httpClient: HttpClient): GraphApi = KtorGraphApi(httpClient)
+
+interface GraphApi {
     suspend fun getList(
         authenticationContext: AuthenticationContext,
         list: AtUri,
         limit: LimitUpToHundred? = LimitUpToHundred(50),
         cursor: String? = null
+    ): RequestResult<ListFromGraph>
+}
+
+private class KtorGraphApi(
+    private val httpClient: HttpClient
+) : GraphApi {
+    override suspend fun getList(
+        authenticationContext: AuthenticationContext,
+        list: AtUri,
+        limit: LimitUpToHundred?,
+        cursor: String?
     ): RequestResult<ListFromGraph> = runRequestCatching {
         httpClient.performAuthorizedRequest(
             authenticationContext,

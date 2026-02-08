@@ -10,39 +10,57 @@ import com.nxoim.blean.repos.MutedWordsRoomDatabase
 import com.nxoim.blean.repos.SavedFeedsRoomDatabase
 import com.nxoim.blean.repos.buildRoomDatabase
 import com.nxoim.blean.repos.media.FileManager
+import com.nxoim.blean.repos.media.OkioFileStore
 import okio.FileSystem
 import okio.Path.Companion.toPath
 import okio.SYSTEM
 
 class UserDataRepositories(
+    private val feedsDb: SavedFeedsRoomDatabase,
+    private val mutedWordsDb: MutedWordsRoomDatabase,
+    private val draftsDb: DraftsRoomDatabase,
+    private val postInteractionsOutboxDb: OutboxRoomDatabase,
     private val baseContentSpecificDbUri: String,
-    encryptionKey: ByteArray?
+    private val mediaFileSystem: FileSystem = FileSystem.SYSTEM
 ) {
-    private val feedsDb = buildRoomDatabase<SavedFeedsRoomDatabase>(
-        basePathUri = baseContentSpecificDbUri,
-        name = "feeds",
-        encryptionKey = encryptionKey
-    )
-    private val mutedWordsDb = buildRoomDatabase<MutedWordsRoomDatabase>(
-        basePathUri = baseContentSpecificDbUri,
-        name = "mutedWords",
-        encryptionKey = encryptionKey
-    )
-    private val draftsDb = buildRoomDatabase<DraftsRoomDatabase>(
-        basePathUri = baseContentSpecificDbUri,
-        name = "drafts",
-        encryptionKey = encryptionKey
-    )
-    private val postInteractionsOutboxDb = buildRoomDatabase<OutboxRoomDatabase>(
-        basePathUri = baseContentSpecificDbUri,
-        name = "outbox",
-        encryptionKey = encryptionKey
+    constructor(
+        baseContentSpecificDbUri: String,
+        encryptionKey: ByteArray?
+    ) : this(
+        buildRoomDatabase<SavedFeedsRoomDatabase>(
+            basePathUri = baseContentSpecificDbUri,
+            name = "feeds",
+            encryptionKey = encryptionKey
+        ),
+        buildRoomDatabase<MutedWordsRoomDatabase>(
+            basePathUri = baseContentSpecificDbUri,
+            name = "mutedWords",
+            encryptionKey = encryptionKey
+        ),
+        buildRoomDatabase<DraftsRoomDatabase>(
+            basePathUri = baseContentSpecificDbUri,
+            name = "drafts",
+            encryptionKey = encryptionKey
+        ),
+        buildRoomDatabase<OutboxRoomDatabase>(
+            basePathUri = baseContentSpecificDbUri,
+            name = "outbox",
+            encryptionKey = encryptionKey
+        ),
+        baseContentSpecificDbUri = baseContentSpecificDbUri,
+        mediaFileSystem = FileSystem.SYSTEM
     )
 
     val feeds = FeedsSettingsRepository(feedsDb.dao())
     val mutedWords = MutedWordsRepository(mutedWordsDb.dao())
     val drafts = DraftsRepository(draftsDb.dao())
-    val draftMediaStorage = FileManager(baseContentSpecificDbUri, "draft")
+    val draftMediaStorage = FileManager(
+        OkioFileStore(
+            "$baseContentSpecificDbUri/draftMedia",
+            mediaFileSystem
+        )
+    )
+
     val postInteractionsOutbox = OutboxRepository(postInteractionsOutboxDb.dao())
 
     suspend fun initialize() {
@@ -64,6 +82,6 @@ class UserDataRepositories(
 
     suspend fun deinitializeAndNuke() {
         deinitialize()
-        FileSystem.SYSTEM.delete(baseContentSpecificDbUri.toPath())
+        mediaFileSystem.deleteRecursively(baseContentSpecificDbUri.toPath())
     }
 }

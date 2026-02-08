@@ -7,14 +7,14 @@ import co.touchlab.stately.concurrency.AtomicReference
 import com.github.michaelbull.result.Err
 import com.github.michaelbull.result.Ok
 import com.github.michaelbull.result.Result
-import com.github.michaelbull.result.getOr
+import com.github.michaelbull.result.andThen
+import com.github.michaelbull.result.get
 import com.github.michaelbull.result.getOrElse
-import com.github.michaelbull.result.getOrThrow
 import com.github.michaelbull.result.map
+import com.github.michaelbull.result.mapError
 import com.github.michaelbull.result.onFailure
 import com.github.michaelbull.result.onSuccess
 import com.nxoim.blean.api.BleanApi
-import com.nxoim.blean.api.BleanKtorClient
 import com.nxoim.blean.api.api.OAuthApi
 import com.nxoim.blean.api.api.oauthStuff.utils.PDSRequestDPoPAuthenticationContext
 import com.nxoim.blean.api.createClient
@@ -38,6 +38,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
@@ -49,12 +50,11 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import kotlin.jvm.JvmInline
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
@@ -79,8 +79,6 @@ class AccountManagerHolder(
     private val mutex = Mutex()
 
     suspend fun initializeIfNotInitialized() {
-        if (_state.value is AccountManagerState.Initialized) return
-
         mutex.withLock {
             if (_state.value is AccountManagerState.Initialized) return
 
@@ -96,37 +94,41 @@ class AccountManagerHolder(
                     platformCredentialsRepository = credentialsRepositoryFactory()
                 )
 
-                withContext(coroutineScope.coroutineContext) {
-                    val session = AccountManager(
-                        rootDataStorageUri = "$rootDataStorageUri/data",
-                        rootCacheStorageUri = "$rootCacheStorageUri/cache",
-                        encryptionKey = encryptionKeyFactory(),
-                        logger = logger,
-                        scope = coroutineScope.childCoroutineScope(),
-                        bleanApi = api,
+                val session = AccountManager(
+                    logger = logger,
+                    scope = coroutineScope.childCoroutineScope(),
+                    bleanApi = api,
+                    rootUserRepository = rootUserRepository,
+                    authenticationManager = AuthenticationManager(
                         rootUserRepository = rootUserRepository,
-                        authenticationManager = AuthenticationManager(
-                            rootUserRepository = rootUserRepository,
-                            oauthAuthAttemptRepository = OAuthAuthenticationAttemptRepository(
-                                buildRoomDatabase<OAuthConfigSettingsDatabase>(
-                                    rootDataStorageUri, "oauthAttempt", encryptionKeyFactory()
-                                ).dao()
-                            ),
-                            atprotoOAuthClient = ATProtoOAuthClient(
-                                oauthApi = OAuthApi(httpClient),
-                                accountApi = api.account,
-                                // Assuming clientId is a constant or available in context
-                                clientId = clientId
-                            ),
-                            logger = logger,
+                        oauthAuthAttemptRepository = OAuthAuthenticationAttemptRepository(
+                            buildRoomDatabase<OAuthConfigSettingsDatabase>(
+                                rootDataStorageUri, "oauthAttempt", encryptionKeyFactory()
+                            ).dao()
                         ),
-                        httpClient = httpClient
-                    )
+                        atprotoOAuthClient = ATProtoOAuthClient(
+                            oauthApi = OAuthApi(httpClient),
+                            accountApi = api.account,
+                            clientId = clientId
+                        ),
+                        logger = logger,
+                    ),
+                    onDestroy = {
+                        httpClient.close()
+                    },
+                    userRepositoriesFactory = {
+                        UserRepositories(
+                            rootDataPathForUser = "$rootDataStorageUri/data/$it",
+                            rootCachePathForUser = "$rootCacheStorageUri/cache/$it",
+                            encryptionKey = encryptionKeyFactory(),
+                            logger = logger
+                        )
+                    }
+                )
 
-                    session.loadInitialAccounts()
+                session.loadInitialAccounts()
 
-                    session
-                }
+                session
             }
 
             _state.value = result.fold(
@@ -147,332 +149,348 @@ class AccountManagerHolder(
     }
 }
 
-@OptIn(ExperimentalCoroutinesApi::class)
 class AccountManager(
-    private val rootDataStorageUri: String,
-    private val rootCacheStorageUri: String,
-    private val encryptionKey: ByteArray?,
     private val logger: Logger,
     private val scope: CoroutineScope,
     private val bleanApi: BleanApi,
     private val rootUserRepository: LoggedInUsersRepository,
     private val authenticationManager: AuthenticationManager,
-    private val httpClient: BleanKtorClient
+    private val onDestroy: suspend () -> Unit = { },
+    private val userRepositoriesFactory: (AccountIdentificator.Did) -> UserRepositories
 ) {
     private val stateUpdateMutex = Mutex()
-    private val accounts = mutableMapOf<AccountIdentificator.Did, AccountRecord>()
-    private val _accountsState = MutableStateFlow<AccountsState>(AccountsState.Loading)
+    private val _records = MutableStateFlow(
+        emptyMap<AccountIdentificator.Did, AccountRecord>()
+    )
+    private val _accounts = MutableStateFlow(
+        emptyMap<AccountIdentificator.Did, Account>()
+    )
+    private val _accountsState = MutableStateFlow<AccountsState>(
+        AccountsState.Loading
+    )
     val accountsState = _accountsState.asStateFlow()
 
     internal suspend fun loadInitialAccounts() {
         val users = rootUserRepository.getAllLoggedInUsers().first()
 
-        for (user in users) {
-            val recordResult = createAccountRecord(user.did)
+        val initialRecords = users.associateBy(
+            keySelector = { it.did },
+            valueTransform = { createAccountRecord(initialDetails = it) }
+        )
 
-            recordResult
-                .onSuccess { record ->
-                    accounts[user.did] = record
-                    initializeAccount(record) // decide soft logout vs init
-                }
-                .onFailure {
-                    val fallbackRecord = createAccountRecordWithFallback(user.did)
-                    accounts[user.did] = fallbackRecord
-                    initializeAccount(fallbackRecord)
-                }
+        stateUpdateMutex.withLock {
+            _records.value = initialRecords
+            _accounts.value = initialRecords.asAccounts
+            _accountsState.value = AccountsState.Initialized(_accounts.asStateFlow())
         }
 
-        updatePublicState()
-    }
-
-    private suspend fun createAccountRecord(
-        did: AccountIdentificator.Did
-    ): Result<AccountRecord, MissingUserError> {
-        val initial = rootUserRepository.getLoggedInUser(did).first()
-            ?: return Err(MissingUserError(did))
-
-        val scope = scope.childCoroutineScope()
-
-        val basicDetailsFlow = rootUserRepository.getLoggedInUser(did)
-            .map { it }
-            .filterNotNull()
-            .stateIn(scope, WhileSubscribed(), initial)
-
-        return Ok(AccountRecord(did, AccountInstance(basicDetailsFlow, logger), scope))
-    }
-
-    private fun createAccountRecordWithFallback(
-        did: AccountIdentificator.Did
-    ): AccountRecord {
-        val fallbackDetails = LoggedInUserBasicDetails(
-            did = did,
-            handle = AccountIdentificator.Handle("@unknown.handle"),
-            displayName = null,
-            avatarUrl = null
-        )
-
-        val newScope = scope.childCoroutineScope()
-        val flow = MutableStateFlow(fallbackDetails)
-
-        return AccountRecord(
-            did = did,
-            instance = AccountInstance(flow, logger),
-            scope = newScope
-        )
+        initialRecords.values
+            .map { record ->
+                record.scope.async {
+                    record.initialize().onFailure {
+                        logger.w(tag = logTag) {
+                            "Initialization skipped for ${record.did}: $it"
+                        }
+                    }
+                }
+            }
+            .awaitAll()
     }
 
     suspend fun beginOauthAuthorization(
         entry: String
     ): Result<String, ATProtoOAuthClientError> =
-        withContext(scope.coroutineContext) {
-            authenticationManager.beginOauthAuthorization(entry)
-        }
+        authenticationManager.beginOauthAuthorization(entry)
 
     suspend fun continueOauthAuthorization(
         callbackUrl: String
     ): Result<LoggedInUserBasicDetails, ContinueOAuthAuthorizationError> =
-        withContext(scope.coroutineContext) {
-            authenticationManager
-                .continueOauthAuthorization(callbackUrl)
-                .onSuccess { details ->
-                    stateUpdateMutex.withLock {
-                        val did = details.did
-                        val record = accounts[did]
-                            ?: createAccountRecordWithFallback(did).also {
-                                accounts[did] = it
-                            }
+        authenticationManager
+            .continueOauthAuthorization(callbackUrl)
+            .andThen { details ->
+                val record = stateUpdateMutex.withLock {
+                    val existing = _records.value[details.did]
+                    val resolved = existing ?: createAccountRecord(details)
 
-                        accounts[did] = record
-                        updatePublicState()
-                        initializeAccount(record)
-                        updatePublicState()
-
-                        logger.i(tag = logTag) {
-                            "Initialization after login successful"
-                        }
-                    }
+                    _records.update { it + (details.did to resolved) }
+                    _accounts.value = _records.value.asAccounts
+                    resolved
                 }
-        }
 
-    private suspend fun buildAuthenticationContextFlow(
-        credentialsFlow: StateFlow<Result<PlatformCredentials, PlatformCredentialsRetrievalError>?>,
-        record: AccountRecord
-    ): Flow<AuthenticationContext?> {
-        val pdsContext by lazy {
-            PDSRequestDPoPAuthenticationContext(
-                onCurrentTimeEpochSeconds = { Clock.System.now().epochSeconds },
-
-                beforeRequestHappens = {
-                    record.refreshJob.get()?.await()
-                },
-
-                onInvalidAuthToken = {
-                    val active = record.refreshJob.get()
-                    if (active != null && active.isActive) return@PDSRequestDPoPAuthenticationContext active
-
-                    val newJob = record.scope.async {
-                        logger.i(tag = logTag) {
-                            "Token is now invalid. WIll refresh now"
-                        }
-
-                        record.refreshMutex.withLock {
-                            refreshTokensAndHandleErrors(record.did)
-                        }
+                record.initialize()
+                    .map { details }
+                    .mapError {
+                        ContinueOAuthAuthorizationError.Internal(
+                            "Post-login initialization failed:\n$it"
+                        )
                     }
-                    record.refreshJob.set(newJob)
-                    newJob
-                },
+            }
 
-                onRequestAuthMethod = {
-                    credentialsFlow.value
-                        ?.map {
-                            when (it) {
-                                is PlatformCredentials.AccessJwt ->
-                                    error("Unexpected AccessJwt requested")
-
-                                is PlatformCredentials.OAuth ->
-                                    AuthenticationMethod.OAuth(
-                                        it.value.accessToken,
-                                        it.value.keyPair
-                                    )
-                            }
-                        }
-                        ?.getOr(null)
-                        ?: error("Credentials missing")
-                },
-
-                logger = logger
-            )
-        }
-
-        return credentialsFlow.mapNotNull { result ->
-            result
-                ?.onFailure {
-                    record.scope.launch { softLogout(record.did) }
-                }
-                ?.map {
-                    when (it) {
-                        is PlatformCredentials.AccessJwt ->
-                            AuthenticationContext.AccessJwt(it.value, it.pdsUrl)
-
-                        is PlatformCredentials.OAuth ->
-                            AuthenticationContext.OAuthContextForPDS(pdsContext)
-                    }
-                }
-                ?.getOrElse {
-                    logger.w(tag = logTag) {
-                        "Cant create authentication context because $it."
-                    }
-                    null
-                }
-        }
+    internal suspend fun forceRefreshOrAwait(did: AccountIdentificator.Did): Result<*, Throwable> {
+        return _records.value[did]
+            ?.forceRefreshToken()
+            ?.mapError { IllegalStateException(it.toString()) }
+            ?: Err(IllegalStateException("Unable to force refresh tokens of account that is not recorded in the client"))
     }
 
-    private suspend fun initializeAccount(record: AccountRecord) {
-        val credentials = rootUserRepository.getCredentials(record.did).first()
-
-        if (credentials == null || credentials.isErr) {
-            logger.w(tag = logTag) {
-                "Missing credentials for ${record.did} → soft logout"
-            }
-            record.instance.markAsNonInitializable()
-            return
-        }
-
-        val credentialsFlow = rootUserRepository
-            .getCredentials(record.did)
-            .stateIn(record.scope)
-
-        val flow = buildAuthenticationContextFlow(credentialsFlow, record)
-            .stateIn(record.scope)
-
-        record.instance.initialize(
-            context = flow,
-            bleanApi = bleanApi,
-            rootDataPathForUser = "$rootDataStorageUri/${record.did}",
-            rootCachePathForUser = "$rootCacheStorageUri/${record.did}",
-            encryptionKey = encryptionKey,
-            instanceCoroutineScope = record.scope,
-            shouldStartActionProcessing = true
-        ).onFailure {
-            logger.e(tag = logTag, throwable = it) {
-                "Initialization failure for ${record.did}"
-            }
-        }
-    }
-
-    private suspend fun refreshTokensAndHandleErrors(
-        did: AccountIdentificator.Did
-    ): Result<OAuthCredentials, RefreshTokenOAuthError> =
-        authenticationManager.refreshOauthClientTokens(did)
-            .onSuccess { new ->
-                // should we also update label on each basic data update
-                val basicUserDetails = rootUserRepository.getLoggedInUser(did).firstOrNull()
-
-                rootUserRepository.saveOrUpdateOAuthCredentials(
-                    did = did,
-                    accessToken = new.accessToken,
-                    refreshToken = new.refreshToken,
-                    authorizationServerUrl = new.authorizationServerUrl,
-                    clientId = new.clientId,
-                    keyPair = new.keyPair,
-                    label = basicUserDetails?.displayName
-                        ?: basicUserDetails?.handle?.toString()
-                        ?: did.toString()
-                )
-            }
-            .onFailure { err ->
-                suspend fun logoutAndNotify() {
-                    logger.w(tag = logTag) {
-                        "Soft logout triggered by refresh error: $err"
-                    }
-                    softLogoutInternal(did)
-                }
-
-                when (err) {
-                    RefreshTokenOAuthError.CantObtainAssembledCredentialsFromRepo -> logoutAndNotify()
-                    RefreshTokenOAuthError.NecessaryDataMissing -> logoutAndNotify()
-                    is RefreshTokenOAuthError.RefreshError -> when (val refreshError = err.value) {
-                        is ATProtoOAuthClientError.ConnectionIssues -> {
-                            logger.w(tag = logTag) {
-                                "Unable to refresh because of error $err. Will not soft log out"
-                            }
-                        }
-
-                        is ATProtoOAuthClientError.Internal -> logoutAndNotify()
-                        is ATProtoOAuthClientError.Other -> logoutAndNotify()
-                        is ATProtoOAuthClientError.ServerError -> {
-                            if (refreshError.code in 400..499) logoutAndNotify()
-                        }
-
-                        is ATProtoOAuthClientError.UnrecoverableTokenError -> logoutAndNotify()
-                        is ATProtoOAuthClientError.ValidationError -> logoutAndNotify()
-                    }
-
-                    is RefreshTokenOAuthError.Unknown -> logoutAndNotify()
-                }
-            }
-
-    suspend fun softLogout(did: AccountIdentificator.Did) {
-        withContext(scope.coroutineContext) {
-            softLogoutInternal(did)
-        }
-    }
-
-    private suspend fun softLogoutInternal(did: AccountIdentificator.Did) {
+    suspend fun softLogout(did: AccountIdentificator.Did): Result<*, Throwable> =
         stateUpdateMutex.withLock {
-            val record = accounts[did] ?: return
-            record.instance.markAsNonInitializable()
-            rootUserRepository.removeOAuthCredentials(did)
-            updatePublicState()
-        }
-    }
-
-    suspend fun logout(did: AccountIdentificator.Did) {
-        withContext(scope.coroutineContext) {
-            stateUpdateMutex.withLock {
-                accounts.remove(did)?.let { record ->
-                    record.instance.markAsNonInitializableAndNuke()
-                    record.scope.cancel()
-                    rootUserRepository.removeLoggedInUserAndCredentials(did)
+            _records.value[did]?.softLogout()
+                ?.onFailure {
+                    logger.e(tag = logTag) {
+                        "Failed to soft log out:\n${it.stackTraceToString()}"
+                    }
                 }
-                updatePublicState()
-            }
+                ?: Err(IllegalStateException("Unable to soft log out of account that is not recorded in the client"))
         }
-    }
 
-    suspend fun deinitializeFully() {
+    suspend fun logout(did: AccountIdentificator.Did): Result<*, Throwable> =
+        stateUpdateMutex.withLock {
+            _records.value[did]?.logout()
+                ?.onSuccess {
+                    _records.update { it - did }
+                    _accounts.value = _records.value.asAccounts
+                }
+                ?.onFailure {
+                    logger.e(tag = logTag) {
+                        "Failed to log out:\n${it.stackTraceToString()}"
+                    }
+                }
+                ?: Err(IllegalStateException("Unable to log out of account that is not recorded in the client"))
+        }
+
+
+    suspend fun deinitializeFully(): Result<*, Throwable> {
         scope.coroutineContext[Job]?.cancelAndJoin()
 
         stateUpdateMutex.withLock {
-            accounts.values.forEach { record ->
-                record.instance.markAsLoadingAndDeinitialize().getOrThrow()
+            _records.value.values.forEach { record ->
+                record.deinitialize().onFailure {
+                    return Err(IllegalStateException("An error occurred while fully deinitializing AccountManager:\n${it.stackTraceToString()}"))
+                }
             }
-            accounts.clear()
+            _records.value = emptyMap()
+            _accounts.value = emptyMap()
             _accountsState.value = AccountsState.Loading
+            onDestroy()
         }
-        httpClient.close()
+
+        return Ok(Unit)
     }
 
-    private val accountsMappedToPublic = MutableStateFlow(accounts.mapToPublic())
-    private suspend fun updatePublicState() {
-        accountsMappedToPublic.value = accounts.mapToPublic()
-        _accountsState.value = AccountsState.Initialized(accountsMappedToPublic)
+    private fun createAccountRecord(
+        initialDetails: LoggedInUserBasicDetails
+    ): AccountRecord {
+        val scope = scope.childCoroutineScope()
+
+        val basicDetailsFlow = rootUserRepository.getLoggedInUser(initialDetails.did)
+            .filterNotNull()
+            .stateIn(scope, WhileSubscribed(), initialDetails)
+
+        return AccountRecord(
+            did = initialDetails.did,
+            instance = AccountInstance(basicDetailsFlow, logger),
+            scope = scope,
+            userRepositoriesFactory = { userRepositoriesFactory(initialDetails.did) }
+        )
     }
 
-    private fun Map<AccountIdentificator.Did, AccountRecord>.mapToPublic() =
-        mapValues { it.value.instance.account }
-            .toMap()
+    private val Map<AccountIdentificator.Did, AccountRecord>.asAccounts
+        get() = mapValues { it.value.instance.account }
+
+    ////////////////////////////////////////////////////////////////////////////////////////
+
+    private inner class AccountRecord(
+        val did: AccountIdentificator.Did,
+        val instance: AccountInstance,
+        val scope: CoroutineScope,
+        private val userRepositoriesFactory: () -> UserRepositories
+    ) {
+        val refreshMutex = Mutex()
+        val refreshJob = AtomicReference<Deferred<Result<*, *>>?>(null)
+
+        suspend fun initialize(): Result<Unit, InitializationError> {
+            val initialCredentials = rootUserRepository.getCredentials(did)
+                .firstOrNull()
+                ?: run {
+                    instance.markAsNonInitializable()
+                    return Err(InitializationError.MissingCredentials)
+                }
+
+            initialCredentials.onFailure {
+                instance.markAsNonInitializable()
+                return Err(InitializationError.CredentialsRetrieval(IllegalStateException(it.toString())))
+            }
+
+            val credentialsFlow = rootUserRepository
+                .getCredentials(did)
+                .stateIn(scope)
+
+            val authContextFlow = buildAuthenticationContextFlow(credentialsFlow)
+                .stateIn(scope)
+
+            return instance.initialize(
+                context = authContextFlow,
+                bleanApi = bleanApi,
+                userRepositoriesFactory = userRepositoriesFactory,
+                instanceCoroutineScope = scope,
+                shouldStartActionProcessing = true,
+            )
+                .mapError { InitializationError.InstanceInitialization(it) }
+        }
+
+        private suspend fun buildAuthenticationContextFlow(
+            credentialsFlow: StateFlow<Result<PlatformCredentials, PlatformCredentialsRetrievalError>?>
+        ): Flow<AuthenticationContext?> {
+            val pdsContext by lazy {
+                PDSRequestDPoPAuthenticationContext(
+                    onCurrentTimeEpochSeconds = { Clock.System.now().epochSeconds },
+
+                    beforeRequestHappens = { refreshJob.get()?.await() },
+
+                    onInvalidAuthToken = {
+                        val active = refreshJob.get()
+                        if (active != null && active.isActive)
+                            return@PDSRequestDPoPAuthenticationContext active
+
+                        val newJob = scope.async {
+                            logger.i(tag = logTag) {
+                                "Token is now invalid. Will refresh now for $did"
+                            }
+                            refreshMutex.withLock {
+                                refreshTokensAndHandleErrors()
+                            }
+                        }
+                        refreshJob.set(newJob)
+                        newJob
+                    },
+
+                    onRequestAuthMethod = {
+                        credentialsFlow.value
+                            ?.map {
+                                when (it) {
+                                    is PlatformCredentials.AccessJwt ->
+                                        error("Unexpected AccessJwt requested")
+
+                                    is PlatformCredentials.OAuth ->
+                                        AuthenticationMethod.OAuth(
+                                            it.value.accessToken,
+                                            it.value.keyPair
+                                        )
+                                }
+                            }
+                            ?.get()
+                            ?: error("Credentials missing")
+                    },
+
+                    logger = logger
+                )
+            }
+
+            return credentialsFlow.map { result ->
+                result
+                    ?.onFailure { scope.launch { softLogout() } }
+                    ?.map {
+                        when (it) {
+                            is PlatformCredentials.AccessJwt ->
+                                AuthenticationContext.AccessJwt(it.value, it.pdsUrl)
+
+                            is PlatformCredentials.OAuth ->
+                                AuthenticationContext.OAuthContextForPDS(pdsContext)
+                        }
+                    }
+                    ?.getOrElse {
+                        logger.w(tag = logTag) {
+                            "Cannot create auth context: $it"
+                        }
+                        null
+                    }
+            }
+        }
+
+        private suspend fun refreshTokensAndHandleErrors(
+        ): Result<OAuthCredentials, RefreshTokenOAuthError> =
+            authenticationManager.refreshOauthClientTokens(did)
+                .onSuccess { new ->
+                    // should we also update label on each basic data update
+                    val basicUserDetails = rootUserRepository.getLoggedInUser(did).firstOrNull()
+
+                    rootUserRepository.saveOrUpdateOAuthCredentials(
+                        did = did,
+                        accessToken = new.accessToken,
+                        refreshToken = new.refreshToken,
+                        authorizationServerUrl = new.authorizationServerUrl,
+                        clientId = new.clientId,
+                        keyPair = new.keyPair,
+                        label = basicUserDetails?.displayName
+                            ?: basicUserDetails?.handle?.toString()
+                            ?: did.toString()
+                    )
+                }
+                .onFailure { err ->
+                    val shouldLogout = when (err) {
+                        RefreshTokenOAuthError.CantObtainAssembledCredentialsFromRepo,
+                        RefreshTokenOAuthError.NecessaryDataMissing,
+                        is RefreshTokenOAuthError.Unknown -> true
+
+                        is RefreshTokenOAuthError.RefreshError -> when (val e = err.value) {
+                            is ATProtoOAuthClientError.ConnectionIssues -> false
+                            is ATProtoOAuthClientError.ServerError -> e.code in 400..499
+                            else -> true
+                        }
+                    }
+
+                    if (shouldLogout) {
+                        logger.w(tag = logTag) {
+                            "Soft logout due to refresh error: $err"
+                        }
+                        softLogout()
+                    }
+                }
+
+        suspend fun forceRefreshToken(): Result<*, *> {
+            val existingJob = refreshJob.get()
+            if (existingJob != null && existingJob.isActive) {
+                logger.i(tag = logTag) {
+                    "Refresh already in progress for $did, waiting for it to complete"
+                }
+                return existingJob.await().map { Unit }
+            }
+
+            val newJob = scope.async {
+                logger.i(tag = logTag) {
+                    "Force refreshing tokens for $did"
+                }
+                refreshMutex.withLock {
+                    refreshTokensAndHandleErrors().map { Unit }
+                }
+            }
+
+            refreshJob.set(newJob)
+            return newJob.await()
+        }
+
+        suspend fun softLogout(): Result<*, Throwable> =
+            rootUserRepository
+                .removeOAuthCredentials(did)
+                .onFailure {
+                    logger.e(tag = logTag) { "Failed to remove credentials on soft logout. $it" }
+                }
+                .andThen { instance.markAsNonInitializable() }
+                .mapError { IllegalStateException("Failed to soft logout. $it") }
+
+        suspend fun logout(): Result<*, Throwable> = rootUserRepository
+            .removeLoggedInUserAndCredentials(did)
+            .andThen {
+                instance.markAsNonInitializableAndNuke()
+                    .also { scope.cancel() }
+            }
+            .mapError { IllegalStateException("Failed to log out. $it") }
+
+        suspend fun deinitialize(): Result<*, Throwable> =
+            instance.markAsLoadingAndDeinitialize()
+    }
 }
-
-private data class AccountRecord(
-    val did: AccountIdentificator.Did,
-    val instance: AccountInstance,
-    val scope: CoroutineScope,
-    val refreshMutex: Mutex = Mutex(),
-    val refreshJob: AtomicReference<Deferred<Result<*, *>>?> =
-        AtomicReference(null)
-)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 sealed interface AccountManagerState {
@@ -518,4 +536,8 @@ sealed interface AccountsState {
     data class InitializationError(val message: String) : AccountsState
 }
 
-data class MissingUserError(val did: AccountIdentificator.Did)
+private sealed interface InitializationError {
+    data object MissingCredentials : InitializationError
+    data class CredentialsRetrieval(val cause: Throwable) : InitializationError
+    data class InstanceInitialization(val cause: Throwable) : InitializationError
+}

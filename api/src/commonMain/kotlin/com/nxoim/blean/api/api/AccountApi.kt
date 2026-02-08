@@ -20,11 +20,41 @@ import io.ktor.http.HttpMethod
 import io.ktor.http.headers
 import io.ktor.http.parameters
 
+fun AccountApi(httpClient: HttpClient): AccountApi = KtorAccountApi(httpClient)
 
-class AccountApi(
-    private val httpClient: HttpClient
-) {
+interface AccountApi {
     suspend fun getProfile(
+        authenticationContext: AuthenticationContext,
+        targetHandleOrDid: AccountIdentificator
+    ): RequestResult<Profile>
+
+    suspend fun getProfileUnauthorized(
+        targetHandleOrDid: AccountIdentificator
+    ): RequestResult<Profile>
+
+    suspend fun getProfiles(
+        authenticationContext: AuthenticationContext,
+        targetHandlesOrDids: List<AccountIdentificator>
+    ): RequestResult<Profiles>
+
+    suspend fun getSuggestions(
+        authenticationContext: AuthenticationContext,
+        limit: LimitUpToHundred? = LimitUpToHundred(50),
+        cursor: String? = null
+    ): RequestResult<Suggestions>
+
+    suspend fun getPreferences(
+        authenticationContext: AuthenticationContext
+    ): RequestResult<Preferences>
+    suspend fun getDidDocumentFromPlcDirectory(did: Did): RequestResult<DidDocument>
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////
+
+private class KtorAccountApi(
+    private val httpClient: HttpClient
+) : AccountApi {
+    override suspend fun getProfile(
         authenticationContext: AuthenticationContext,
         targetHandleOrDid: AccountIdentificator
     ): RequestResult<Profile> = runRequestCatching {
@@ -38,17 +68,17 @@ class AccountApi(
         )
     }
 
-    suspend fun getProfileUnauthorized(
+    override suspend fun getProfileUnauthorized(
         targetHandleOrDid: AccountIdentificator
     ): RequestResult<Profile> = runRequestCatching {
         httpClient.get(
-            "/https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile",
+            "https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile",
             headers { appendContentTypeApplicationJson() },
             parameters { append("actor", targetHandleOrDid.toString()) },
         )
     }
 
-    suspend fun getProfiles(
+    override suspend fun getProfiles(
         authenticationContext: AuthenticationContext,
         targetHandlesOrDids: List<AccountIdentificator>
     ): RequestResult<Profiles> = runRequestCatching {
@@ -66,10 +96,10 @@ class AccountApi(
         )
     }
 
-    suspend fun getSuggestions(
+    override suspend fun getSuggestions(
         authenticationContext: AuthenticationContext,
-        limit: LimitUpToHundred? = LimitUpToHundred(50),
-        cursor: String? = null
+        limit: LimitUpToHundred?,
+        cursor: String?
     ): RequestResult<Suggestions> = runRequestCatching {
         httpClient.performAuthorizedRequest(
             authenticationContext = authenticationContext,
@@ -86,7 +116,7 @@ class AccountApi(
         )
     }
 
-    suspend fun getPreferences(
+    override suspend fun getPreferences(
         authenticationContext: AuthenticationContext
     ): RequestResult<Preferences> =
         runRequestCatching {
@@ -100,17 +130,11 @@ class AccountApi(
             )
         }
 
-    // TODO shouldnt be here i think
-    suspend fun getDidDocumentFromPlcDirectory(did: Did): RequestResult<DidDocument> =
+    override suspend fun getDidDocumentFromPlcDirectory(did: Did): RequestResult<DidDocument> =
         runRequestCatching {
             httpClient.get(
                 "https://plc.directory/$did",
                 headers { appendAcceptApplicationJson() }
             )
         }
-
-    // TODO
-    suspend fun putPreferences(): Nothing = TODO()
-    suspend fun searchActorsTypeahead(): Nothing = TODO()
-    suspend fun searchActors(): Nothing = TODO()
 }

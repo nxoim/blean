@@ -25,19 +25,10 @@ import com.nxoim.blean.api.utils.runRequestCatching
 import io.ktor.http.headers
 import kotlin.io.encoding.ExperimentalEncodingApi
 
-class OAuthApi(
-    private val client: BleanKtorClient
-) {
-    private val httpClient = client.value
-    suspend fun getClientMetadata(fullUrl: String): RequestResult<ClientMetadata> =
-        runRequestCatching {
-            httpClient.get(
-                url = fullUrl,
-                headers = headers { appendAcceptApplicationJson() }
-            )
-        }
+fun OAuthApi(httpClient: BleanKtorClient): OAuthApi =  KtorOAuthApi(httpClient)
 
-    // /push/authorize
+interface OAuthApi {
+    suspend fun getClientMetadata(fullUrl: String): RequestResult<ClientMetadata>
     suspend fun getPushedAuthorizationRequest(
         pushedAuthRequestFullUrl: String,
         responseType: String,
@@ -47,7 +38,56 @@ class OAuthApi(
         scopes: List<String>,
         codeChallenge: OAuthCodeChallenge? = null,
         loginHint: String? = null,
-        clientAssertion: String? = null,
+        clientAssertion: String? = null
+    ): OAuthRelatedResponseResult<ResponseWithDPoPNonce<PushedAuthorizationRequest>>
+
+    @OptIn(ExperimentalEncodingApi::class)
+    suspend fun getInitialTokens(
+        redirectUrl: String,
+        codeVerifier: OAuthCodeVerifier,
+        code: String,
+        tokenEndpointFullUrl: String,
+        clientId: String,
+        dpopProof: DPoPProof
+    ): OAuthRelatedResponseResult<ResponseWithDPoPNonce<OAuthTokenData>>
+
+    suspend fun getRefreshedToken(
+        clientId: String,
+        refreshToken: String,
+        tokenEndpointFullUrl: String,
+        dpopProof: DPoPProof
+    ): OAuthRelatedResponseResult<OAuthTokenData>
+
+    suspend fun getProtectedResource(pdsServerUrl: String): RequestResult<OAuthProtectedResource>
+    suspend fun getAuthorizationServerMetadata(entrypoint: String): RequestResult<AuthorizationServerMetadata>
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////
+
+private class KtorOAuthApi(
+    private val client: BleanKtorClient
+) : OAuthApi {
+    private val httpClient = client.value
+
+    override suspend fun getClientMetadata(fullUrl: String): RequestResult<ClientMetadata> =
+        runRequestCatching {
+            httpClient.get(
+                url = fullUrl,
+                headers = headers { appendAcceptApplicationJson() }
+            )
+        }
+
+    // /push/authorize
+    override suspend fun getPushedAuthorizationRequest(
+        pushedAuthRequestFullUrl: String,
+        responseType: String,
+        clientId: String,
+        redirectUri: String,
+        state: OAuthStateToken,
+        scopes: List<String>,
+        codeChallenge: OAuthCodeChallenge?,
+        loginHint: String?,
+        clientAssertion: String?,
     ) = runOauthedRequestWithDpopNonceCatching<PushedAuthorizationRequest> {
         if (scopes.none { it == "atproto" }) error("Scopes for PAR must contain atproto")
 
@@ -74,7 +114,7 @@ class OAuthApi(
     }
 
     @OptIn(ExperimentalEncodingApi::class)
-    suspend fun getInitialTokens(
+    override suspend fun getInitialTokens(
         redirectUrl: String,
         codeVerifier: OAuthCodeVerifier,
         code: String,
@@ -100,7 +140,7 @@ class OAuthApi(
             )
         }
 
-    suspend fun getRefreshedToken(
+    override suspend fun getRefreshedToken(
         clientId: String,
         refreshToken: String,
         tokenEndpointFullUrl: String,
@@ -121,7 +161,7 @@ class OAuthApi(
         )
     }
 
-    suspend fun getProtectedResource(
+    override suspend fun getProtectedResource(
         pdsServerUrl: String
     ): RequestResult<OAuthProtectedResource> = runRequestCatching {
         httpClient.get(
@@ -133,7 +173,7 @@ class OAuthApi(
         )
     }
 
-    suspend fun getAuthorizationServerMetadata(
+    override suspend fun getAuthorizationServerMetadata(
         entrypoint: String
     ): RequestResult<AuthorizationServerMetadata> =
         runRequestCatching {

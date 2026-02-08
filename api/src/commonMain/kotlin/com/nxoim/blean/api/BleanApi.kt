@@ -5,11 +5,22 @@ import com.nxoim.blean.api.api.FeedApi
 import com.nxoim.blean.api.api.RepoApi
 import com.nxoim.blean.api.api.SessionApi
 
-class BleanApi(
+fun BleanApi(httpClient: BleanKtorClient): BleanApi = KtorBleanApi(httpClient)
+
+interface BleanApi {
+    val session: SessionApi
+    val account: AccountApi
+    val feed: FeedApi
+    val repo: RepoApi
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////
+
+private class KtorBleanApi(
     private val client: BleanKtorClient
-) {
-    val session = SessionApi(client.value)
-    val account = AccountApi(client.value)
-    val feed = FeedApi(client.value)
-    val repo = RepoApi(client.value)
+) : BleanApi {
+    override val session = SessionApi(client.value)
+    override val account = AccountApi(client.value)
+    override val feed = FeedApi(client.value)
+    override val repo = RepoApi(client.value)
 }

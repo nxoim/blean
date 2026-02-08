@@ -18,6 +18,8 @@ expect inline fun <reified T : RoomDatabase> buildRoomDatabase(
     encryptionKey: ByteArray?
 ): T
 
+expect inline fun <reified T : RoomDatabase> inMemoryDatabaseBuilder(): RoomDatabase.Builder<T>
+
 @Suppress("NO_ACTUAL_FOR_EXPECT")
 annotation class SuppressNoActualForExpect
 

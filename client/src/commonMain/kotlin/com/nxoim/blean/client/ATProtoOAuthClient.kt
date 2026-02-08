@@ -110,8 +110,8 @@ class ATProtoOAuthClient(
                                     stateToken
                                 )
                             )
-                        } catch (_: IllegalStateException) {
-                            Err(ATProtoOAuthClientError.ValidationError("Authorization result"))
+                        } catch (e: IllegalStateException) {
+                            Err(ATProtoOAuthClientError.ValidationError("Authorization result: ${e.stackTraceToString()}"))
                         }
 
                         webviewResult.andThen {
@@ -201,8 +201,8 @@ class ATProtoOAuthClient(
             .andThen {
                 try {
                     Ok(it.response.validateSafetyOrThrow(authorizationServerMetadata.issuer))
-                } catch (_: Exception) {
-                    Err(ATProtoOAuthClientError.ValidationError("First token request"))
+                } catch (e: Exception) {
+                    Err(ATProtoOAuthClientError.ValidationError("First token request: ${e.stackTraceToString()}"))
                 }
             }
             .andThen {
@@ -214,7 +214,6 @@ class ATProtoOAuthClient(
                             onCurrentTimeEpochSeconds = { Clock.System.now().epochSeconds },
                             beforeRequestHappens = { /* nothing */ },
                             onInvalidAuthToken = {
-                                // TODO this crashes all verifications somehow. idk why token is invalud??
                                 // since this is in a try catch block
                                 error("Authentication was successful, but verification of the authentication token has failed. Token was invalid upon user data retrieval")
                             },
@@ -320,10 +319,10 @@ class ATProtoOAuthClient(
             .andThen { clientMetadata ->
                 try {
                     Ok(clientMetadata.validateOrThrow(clientId))
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     Err(
                         ATProtoOAuthClientError.ValidationError(
-                            "Client metadata"
+                            "Client metadata: ${e.stackTraceToString()}"
                         )
                     )
                 }
@@ -335,10 +334,10 @@ class ATProtoOAuthClient(
             .andThen {
                 try {
                     Ok(it.verifySafetyOrThrow())
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     Err(
                         ATProtoOAuthClientError.ValidationError(
-                            "Authorization server metadata"
+                            "Authorization server metadata: ${e.stackTraceToString()}"
                         )
                     )
                 }

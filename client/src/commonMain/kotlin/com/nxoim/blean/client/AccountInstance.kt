@@ -58,11 +58,9 @@ class AccountInstance(
     internal suspend fun initialize(
         context: Flow<AuthenticationContext?>,
         bleanApi: BleanApi,
-        rootDataPathForUser: String,
-        rootCachePathForUser: String,
-        encryptionKey: ByteArray?,
         instanceCoroutineScope: CoroutineScope,
-        shouldStartActionProcessing: Boolean
+        shouldStartActionProcessing: Boolean,
+        userRepositoriesFactory: () -> UserRepositories
     ): Result<Unit, Throwable> {
         val isInitializedAlready = mutex.withLock { client.value is BleanClient.LoggedIn }
 
@@ -85,10 +83,8 @@ class AccountInstance(
                                     .first()
                             },
                             bleanApi = bleanApi,
-                            rootDataPathForUser = rootDataPathForUser,
-                            rootCachePathForUser = rootCachePathForUser,
-                            encryptionKey = encryptionKey,
                             instanceCoroutineScope = instanceCoroutineScope,
+                            userRepositories = userRepositoriesFactory(),
                         )
                     }
 
@@ -179,20 +175,13 @@ fun createClientInstance(
     basicDetails: StateFlow<LoggedInUserBasicDetails>,
     onAuthenticationContextRequest: suspend () -> AuthenticationContext,
     bleanApi: BleanApi,
-    rootDataPathForUser: String,
-    rootCachePathForUser: String,
-    encryptionKey: ByteArray?,
-    instanceCoroutineScope: CoroutineScope
+    instanceCoroutineScope: CoroutineScope,
+    userRepositories: UserRepositories
 ) = object : ClientInstance {
     override val usersDid = basicDetails.value.did
     override val instanceCoroutineScope = instanceCoroutineScope
 
-    override val userRepositories = UserRepositories(
-        rootDataPathForUser = rootDataPathForUser,
-        rootCachePathForUser = rootCachePathForUser,
-        encryptionKey = encryptionKey,
-        logger = logger
-    ).apply {
+    override val userRepositories = userRepositories.apply {
         instanceCoroutineScope.launch { initialize() } // include storage inits into the try catch
     }
 
@@ -257,15 +246,11 @@ interface ClientInstance : OAuthBleanClient, ActionProcessors {
 
     // Wait for jobs to finish and then close repos
     suspend fun deinitialize(nuke: Boolean = false) {
-        instanceCoroutineScope
-            .coroutineContext[Job]
-            ?.cancelAndJoin()
-
         if (nuke)
-            userRepositories.deinitializeAndNuke()
-        else
-            userRepositories.deinitialize()
-    }
+                userRepositories.deinitializeAndNuke()
+            else
+                userRepositories.deinitialize()
+        }
 }
 
 interface ActionProcessors {

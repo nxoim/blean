@@ -3,14 +3,18 @@ package com.nxoim.blean.client
 import co.touchlab.kermit.Logger
 
 class UserRepositories(
-    private val rootDataPathForUser: String,
-    private val rootCachePathForUser: String,
-    private val encryptionKey: ByteArray?,
-    private val logger: Logger
-) {
-    val userData = UserDataRepositories("$rootDataPathForUser/user", encryptionKey)
-    val contentRepository =
+    val userData: UserDataRepositories,
+    val contentRepository: ContentRepositories
+)  {
+    constructor(
+        rootDataPathForUser: String,
+        rootCachePathForUser: String,
+        encryptionKey: ByteArray?,
+        logger: Logger
+    ) : this(
+        UserDataRepositories("$rootDataPathForUser/user", encryptionKey),
         ContentRepositories("$rootCachePathForUser/content", encryptionKey, logger)
+    )
 
     suspend fun initialize() {
         userData.initialize()

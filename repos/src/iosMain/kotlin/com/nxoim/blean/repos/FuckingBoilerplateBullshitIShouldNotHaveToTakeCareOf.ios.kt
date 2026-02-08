@@ -36,3 +36,8 @@ internal fun makeSurePathExists(basePathUri: String) {
         error = null
     )
 }
+
+actual inline fun <reified T : RoomDatabase> inMemoryDatabaseBuilder() =
+    Room
+        .inMemoryDatabaseBuilder<T>()
+        .setDriver(androidx.sqlite.driver.bundled.BundledSQLiteDriver())
