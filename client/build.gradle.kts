@@ -54,6 +54,7 @@ kotlin {
                 implementation(libs.kotlin.test)
                 implementation(libs.okioFakeFileSystem)
                 implementation(libs.kotlinx.coroutines.test)
+                implementation(libs.ktorMock)
             }
         }
     }

@@ -1,12 +1,13 @@
 import co.touchlab.kermit.Logger
 import co.touchlab.stately.concurrency.AtomicInt
 import co.touchlab.stately.concurrency.value
-import com.github.michaelbull.result.Err
 import com.github.michaelbull.result.Ok
 import com.github.michaelbull.result.onFailure
 import com.nxoim.blean.api.BleanApi
+import com.nxoim.blean.api.BleanKtorClient
 import com.nxoim.blean.api.api.AccountApi
 import com.nxoim.blean.api.api.FeedApi
+import com.nxoim.blean.api.api.OAuthApi
 import com.nxoim.blean.api.api.RepoApi
 import com.nxoim.blean.api.api.SessionApi
 import com.nxoim.blean.api.api.mock._MockAccountApi
@@ -22,7 +23,7 @@ import com.nxoim.blean.api.api.oauthStuff.models.OAuthCodeVerifier
 import com.nxoim.blean.api.api.oauthStuff.models.OAuthStateToken
 import com.nxoim.blean.api.api.oauthStuff.models.ResponseWithDPoPNonce
 import com.nxoim.blean.api.api.oauthStuff.utils.generate
-import com.nxoim.blean.api.models.account.Preferences
+import com.nxoim.blean.api.api.oauthStuff.utils.internal.invalidTokenHeaders
 import com.nxoim.blean.api.models.account.Profile
 import com.nxoim.blean.api.models.oauth.AuthorizationServerMetadata
 import com.nxoim.blean.api.models.oauth.ClientMetadata
@@ -30,8 +31,8 @@ import com.nxoim.blean.api.models.oauth.OAuthTokenData
 import com.nxoim.blean.api.models.oauth.PushedAuthorizationRequest
 import com.nxoim.blean.api.utils.AuthenticationContext
 import com.nxoim.blean.api.utils.OAuthRelatedResponseResult
-import com.nxoim.blean.api.utils.RequestResult
 import com.nxoim.blean.bskyPrimitives.AccountIdentificator
+import com.nxoim.blean.bskyPrimitives.AtUri
 import com.nxoim.blean.bskyPrimitives.Did
 import com.nxoim.blean.client.ATProtoOAuthClient
 import com.nxoim.blean.client.AccountManager
@@ -41,7 +42,6 @@ import com.nxoim.blean.client.BleanClient
 import com.nxoim.blean.client.ContentRepositories
 import com.nxoim.blean.client.UserDataRepositories
 import com.nxoim.blean.client.UserRepositories
-import com.nxoim.blean.commonThingsDumpster.RequestError
 import com.nxoim.blean.draft.DraftsRoomDatabase
 import com.nxoim.blean.models.LoggedInUserBasicDetails
 import com.nxoim.blean.outbox.OutboxRoomDatabase
@@ -58,16 +58,27 @@ import com.nxoim.blean.repos.OAuthConfigSettingsDao
 import com.nxoim.blean.repos.OAuthConfigSettingsDatabase
 import com.nxoim.blean.repos.SavedFeedsRoomDatabase
 import com.nxoim.blean.repos.inMemoryDatabaseBuilder
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.client.network.sockets.ConnectTimeoutException
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
+import io.ktor.utils.io.ByteReadChannel
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import okio.FileSystem
+import okio.Path
+import okio.Path.Companion.toPath
 import okio.fakefilesystem.FakeFileSystem
 import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -78,16 +89,16 @@ class AccountManagerTest {
     fun `overall initialization`() = runTest {
         val userRepo = MockLoggedInUsersRepository()
         val expectedUsers = List(5) {
-            createTestUser(did = "did:plc:$it", handle = "test.handle.$it")
+            createMockUser(did = "did:plc:$it", handle = "test.handle.$it")
         }
 
         expectedUsers.forEach {
             userRepo.saveOrUpdateLoggedInUser(it)
         }
 
-        userRepo.setupUserWithCredentials(expectedUsers.first())
+        userRepo.setupMockUserWithCredentials(expectedUsers.first())
 
-        val accountManager = createTestAccountManager(userRepo)
+        val accountManager = createMockAccountManager(userRepo)
 
         assertTrue("Initial account state must be Loading") {
             accountManager.accountsState.value is AccountsState.Loading
@@ -110,11 +121,15 @@ class AccountManagerTest {
     @Test
     fun `soft logout removes credentials but keeps account in records`() = runTest {
         val userRepo = MockLoggedInUsersRepository()
-        val expectedUser = createTestUser()
+        val expectedUser = createMockUser()
 
-        userRepo.setupUserWithCredentials(expectedUser)
+        userRepo.setupMockUserWithCredentials(expectedUser)
 
-        val accountManager = createTestAccountManager(userRepo)
+        val fileSystem = FakeFileSystem()
+        val accountManager = createMockAccountManager(
+            userRepo,
+            repositories = createMockUserRepositories(did = expectedUser.did, fileSystem = fileSystem)
+        )
 
         accountManager.loadInitialAccounts()
 
@@ -135,16 +150,30 @@ class AccountManagerTest {
             assertEquals(it.accounts.value.values.first().basicDetails.value, expectedUser)
             assertTrue(it.accounts.value.values.first().client.value is BleanClient.SoftLoggedOut)
         }
+
+        assertTrue(
+            fileSystem.exists(mockUserDataFolderPath(expectedUser.did)),
+            "Soft log out is supposed to keep user data folders"
+        )
+
+        assertTrue(
+            fileSystem.exists(mockUserCacheFolderPath(expectedUser.did)),
+            "Soft log out is supposed to keep user cache folders"
+        )
     }
 
     @Test
     fun `hard logout removes account completely`() = runTest {
         val userRepo = MockLoggedInUsersRepository()
-        val expectedUser = createTestUser()
+        val expectedUser = createMockUser()
 
-        userRepo.setupUserWithCredentials(expectedUser)
+        userRepo.setupMockUserWithCredentials(expectedUser)
 
-        val accountManager = createTestAccountManager(userRepo)
+        val fileSystem = FakeFileSystem()
+        val accountManager = createMockAccountManager(
+            userRepo,
+            repositories = createMockUserRepositories(did = expectedUser.did, fileSystem = fileSystem)
+        )
 
         accountManager.loadInitialAccounts()
 
@@ -163,13 +192,23 @@ class AccountManagerTest {
             assertTrue(it is AccountsState.Initialized)
             assertEquals(emptyMap(), it.accounts.value)
         }
+
+        assertFalse(
+            fileSystem.exists(mockUserDataFolderPath(expectedUser.did)),
+            "Log out is supposed to delete user data folders"
+        )
+
+        assertFalse(
+            fileSystem.exists(mockUserCacheFolderPath(expectedUser.did)),
+            "Log out is supposed to delete user cache folders"
+        )
     }
 
     @Test
     fun `OAuth flow creates and initializes new account`() = runTest {
         val userRepo = MockLoggedInUsersRepository()
         val oauthAttemptRepo = MockOAuthAuthenticationAttemptRepository()
-        val oauthConfig = createTestOAuthConfig()
+        val oauthConfig = createMockOAuthConfig()
 
         val mockInitialTokens = ResponseWithDPoPNonce(
             "anotherFakeDpopNonce",
@@ -236,7 +275,7 @@ class AccountManagerTest {
             oauthConfig.clientMetadata.clientId
         )
 
-        val accountManager = createTestAccountManager(
+        val accountManager = createMockAccountManager(
             userRepo,
             authManager = MockAuthenticationManager(userRepo, oauthAttemptRepo, oauthClient)
         )
@@ -289,10 +328,11 @@ class AccountManagerTest {
     fun `OAuth flow updates existing account credentials`() = runTest {
         val userRepo = MockLoggedInUsersRepository()
         val oauthAttemptRepo = MockOAuthAuthenticationAttemptRepository()
-        val oauthConfig = createTestOAuthConfig()
+        val oauthConfig = createMockOAuthConfig()
 
-        val existingUser = createTestUser(did = "did:plc:existingUser", handle = "existing.user")
+        val existingUser = createMockUser(did = "did:plc:existingUser", handle = "existing.user")
         userRepo.saveOrUpdateLoggedInUser(existingUser)
+
 
         val mockInitialTokens = ResponseWithDPoPNonce(
             "anotherFakeDpopNonce",
@@ -356,7 +396,7 @@ class AccountManagerTest {
             oauthConfig.clientMetadata.clientId
         )
 
-        val accountManager = createTestAccountManager(
+        val accountManager = createMockAccountManager(
             userRepo,
             authManager = MockAuthenticationManager(userRepo, oauthAttemptRepo, oauthClient)
         )
@@ -407,113 +447,56 @@ class AccountManagerTest {
     @Test
     fun `4xx token refresh error triggers automatic soft logout`() = runTest {
         val userRepo = MockLoggedInUsersRepository()
-        val expectedUser = createTestUser()
-
-        val mockOauthApi = object : _MockOAuthApi() {
-            val errResponse = Err(
-                RequestError.Http<Nothing>(401, description = "test", responseBody = null)
+        val expectedUser = createMockUser()
+        val mockEngine = MockEngine { request ->
+            respond(
+                content = ByteReadChannel(""),
+                status = HttpStatusCode.BadRequest,
+                headers = headersOf(invalidTokenHeaders)
             )
-
-            override suspend fun getRefreshedToken(
-                clientId: String,
-                refreshToken: String,
-                tokenEndpointFullUrl: String,
-                dpopProof: DPoPProof
-            ) = errResponse
-
-            override suspend fun getClientMetadata(fullUrl: String) = errResponse
         }
+        val mockClient = HttpClient(mockEngine)
 
-        val oauthClient = ATProtoOAuthClient(mockOauthApi, _MockAccountApi(), "fake.clientid")
+        userRepo.setupMockUserWithCredentials(expectedUser, clientId = mockClientId)
 
-        userRepo.setupUserWithCredentials(expectedUser)
-
-        val accountManager = createTestAccountManager(
-            userRepo,
-            authManager = MockAuthenticationManager(userRepo, oauthClient = oauthClient),
-            bleanApi = MockBleanApi(
-                account = object : _MockAccountApi() {
-                    override suspend fun getPreferences(
-                        authenticationContext: AuthenticationContext
-                    ): RequestResult<Preferences> =
-                        Err(RequestError.Http(401, description = "test", responseBody = null))
-                }
-            )
+        val accountManager = AccountManager(
+            logger = Logger,
+            scope = backgroundScope,
+            bleanApi = BleanApi(BleanKtorClient(mockClient)),
+            rootUserRepository = userRepo,
+            authenticationManager = MockAuthenticationManager(
+                userRepo,
+                oauthClient = ATProtoOAuthClient(
+                    OAuthApi(BleanKtorClient(mockClient)),
+                    AccountApi(mockClient),
+                    clientId = mockClientId
+                )
+            ),
+            userRepositoriesFactory = { createMockUserRepositories() }
         )
 
         accountManager.loadInitialAccounts()
 
-        accountManager.accountsState.value.let {
-            assertTrue(it is AccountsState.Initialized)
+        val state = accountManager.accountsState.value
+        assertTrue(state is AccountsState.Initialized)
+        val account = state.accounts.value[expectedUser.did]
+        assertNotNull(account)
 
-            val account = it.accounts.value.values.first()
-            val client = account.client.value
-            assertTrue(client is BleanClient.LoggedIn)
+        val loggedInClient = account.client.value as BleanClient.LoggedIn
 
-            val refreshResult = accountManager.forceRefreshOrAwait(expectedUser.did)
+        loggedInClient.feed.loadAndCachePost(AtUri("at://test"))
+            .onFailure { println(it) }
 
-            assertTrue(refreshResult.isErr)
-            assertTrue(it.accounts.value.values.first().client.value is BleanClient.SoftLoggedOut)
-        }
-    }
-
-    @Test
-    fun `network errors during refresh do not trigger logout`() = runTest {
-        val userRepo = MockLoggedInUsersRepository()
-        val expectedUser = createTestUser()
-
-        val mockOauthApi = object : _MockOAuthApi() {
-            val errResponse = Err(RequestError.CantConnectToInternet)
-
-            override suspend fun getRefreshedToken(
-                clientId: String,
-                refreshToken: String,
-                tokenEndpointFullUrl: String,
-                dpopProof: DPoPProof
-            ) = errResponse
-
-            override suspend fun getClientMetadata(fullUrl: String) = errResponse
-        }
-
-        val oauthClient = ATProtoOAuthClient(mockOauthApi, _MockAccountApi(), "fake.clientid")
-
-        userRepo.setupUserWithCredentials(expectedUser)
-
-        val accountManager = createTestAccountManager(
-            userRepo,
-            authManager = MockAuthenticationManager(userRepo, oauthClient = oauthClient),
-            bleanApi = MockBleanApi(
-                account = object : _MockAccountApi() {
-                    override suspend fun getPreferences(
-                        authenticationContext: AuthenticationContext
-                    ): RequestResult<Preferences> =
-                        Err(RequestError.Http(401, description = "test", responseBody = null))
-                }
-            )
-        )
-
-        accountManager.loadInitialAccounts()
-
-        accountManager.accountsState.value.let {
-            assertTrue(it is AccountsState.Initialized)
-
-            val account = it.accounts.value.values.first()
-            val client = account.client.value
-            assertTrue(client is BleanClient.LoggedIn)
-
-            val refreshResult = accountManager.forceRefreshOrAwait(expectedUser.did)
-
-            assertTrue(refreshResult.isErr)
-            assertTrue(it.accounts.value.values.first().client.value is BleanClient.LoggedIn)
-        }
+        account.client.firstOrNull { it is BleanClient.SoftLoggedOut }
+        assertTrue(account.client.value is BleanClient.SoftLoggedOut)
     }
 
     @Test
     fun `concurrent requests during token refresh share single refresh operation`() = runTest {
         val userRepo = MockLoggedInUsersRepository()
-        val expectedUser = createTestUser()
+        val expectedUser = createMockUser()
         val refreshCallCount = AtomicInt(0)
-        val oauthConfig = createTestOAuthConfig()
+        val oauthConfig = createMockOAuthConfig()
 
         val mockOauthApi = object : _MockOAuthApi() {
             override suspend fun getClientMetadata(fullUrl: String) =
@@ -555,13 +538,13 @@ class AccountManagerTest {
             oauthConfig.clientMetadata.clientId
         )
 
-        userRepo.setupUserWithCredentials(
+        userRepo.setupMockUserWithCredentials(
             expectedUser,
             authServerUrl = oauthConfig.authServerMetadata.issuer,
             clientId = oauthConfig.clientMetadata.clientId
         )
 
-        val accountManager = createTestAccountManager(
+        val accountManager = createMockAccountManager(
             userRepo,
             authManager = MockAuthenticationManager(userRepo, oauthClient = oauthClient)
         )
@@ -587,42 +570,112 @@ class AccountManagerTest {
         val updatedClient = state.accounts.value[expectedUser.did]?.client?.value
         assertTrue(updatedClient is BleanClient.LoggedIn)
     }
+
+    @Test
+    fun `network errors during refresh do not trigger logout`() = runTest {
+        val userRepo = MockLoggedInUsersRepository()
+        val expectedUser = createMockUser()
+
+        var requestCount = 0
+        val mockEngine = MockEngine { request ->
+            requestCount++
+            when {
+                // return 400 to trigger refresh
+                requestCount == 1 -> respond(
+                    content = ByteReadChannel(""),
+                    status = HttpStatusCode.BadRequest,
+                    headers = headersOf(invalidTokenHeaders)
+                )
+                // then network error
+                else -> throw ConnectTimeoutException("Network unreachable")
+            }
+        }
+        val mockClient = HttpClient(mockEngine)
+
+        userRepo.setupMockUserWithCredentials(expectedUser, clientId = mockClientId)
+
+        val accountManager = AccountManager(
+            logger = Logger,
+            scope = backgroundScope,
+            bleanApi = BleanApi(BleanKtorClient(mockClient)),
+            rootUserRepository = userRepo,
+            authenticationManager = MockAuthenticationManager(
+                userRepo,
+                oauthClient = ATProtoOAuthClient(
+                    OAuthApi(BleanKtorClient(mockClient)),
+                    AccountApi(mockClient),
+                    clientId = mockClientId
+                )
+            ),
+            userRepositoriesFactory = { createMockUserRepositories() }
+        )
+
+        accountManager.loadInitialAccounts()
+
+        val state = accountManager.accountsState.value
+        assertTrue(state is AccountsState.Initialized)
+        val account = state.accounts.value[expectedUser.did]
+        assertNotNull(account)
+
+        val client = account.client.value
+        assertTrue(client is BleanClient.LoggedIn)
+
+        val loadResult = client.feed.loadAndCachePost(AtUri("at://test"))
+            .onFailure { println(it) }
+
+        assertTrue(loadResult.isErr)
+
+        assertTrue(account.client.value is BleanClient.LoggedIn)
+    }
 }
 
-// Test Helpers
+private fun mockUserCacheFolderPath(
+    did: AccountIdentificator.Did
+): Path = "/testCache".toPath().resolve("$did")
 
-private fun createTestUserRepositories() = UserRepositories(
+private fun mockUserDataFolderPath(
+    did: AccountIdentificator.Did
+): Path = "/testData".toPath().resolve("$did")
+
+private fun createMockUserRepositories(
+    did: AccountIdentificator.Did = AccountIdentificator.Did(Did.Plc("did:plc:test")),
+    fileSystem: FileSystem = FakeFileSystem()
+) = UserRepositories(
     UserDataRepositories(
         feedsDb = inMemoryDatabaseBuilder<SavedFeedsRoomDatabase>().build(),
         mutedWordsDb = inMemoryDatabaseBuilder<MutedWordsRoomDatabase>().build(),
         draftsDb = inMemoryDatabaseBuilder<DraftsRoomDatabase>().build(),
         postInteractionsOutboxDb = inMemoryDatabaseBuilder<OutboxRoomDatabase>().build(),
-        baseContentSpecificDbUri = "/test",
-        mediaFileSystem = FakeFileSystem()
+        baseContentSpecificDbUri = mockUserDataFolderPath(did).toString(),
+        mediaFileSystem = fileSystem
     ),
     ContentRepositories(
-        baseContentSpecificDbUri = "/test2",
+        baseContentSpecificDbUri = mockUserCacheFolderPath(did).toString(),
         logger = Logger,
         apiResponseCacheDb = inMemoryDatabaseBuilder<ApiResponseRoomDatabase>().build(),
-        mediaFileSystem = FakeFileSystem()
-    )
+        mediaFileSystem = fileSystem
+    ),
+    mockUserDataFolderPath(did).toString(),
+    mockUserCacheFolderPath(did).toString(),
+    fileSystem
 )
 
 
-private fun TestScope.createTestAccountManager(
+private fun TestScope.createMockAccountManager(
     userRepo: LoggedInUsersRepository,
     authManager: AuthenticationManager = MockAuthenticationManager(userRepo),
-    bleanApi: BleanApi = MockBleanApi()
+    bleanApi: BleanApi = MockBleanApi(),
+    repositories: UserRepositories = createMockUserRepositories()
 ) = AccountManager(
     logger = Logger,
     scope = backgroundScope,
     bleanApi = bleanApi,
     rootUserRepository = userRepo,
     authenticationManager = authManager,
-    userRepositoriesFactory = { createTestUserRepositories() }
+    userRepositoriesFactory = { repositories }
 )
 
-private fun createTestUser(
+private fun createMockUser(
     did: String = "did:plc:test",
     handle: String = "test.handle.test"
 ) = LoggedInUserBasicDetails(
@@ -632,31 +685,41 @@ private fun createTestUser(
     avatarUrl = null
 )
 
-private suspend fun LoggedInUsersRepository.setupUserWithCredentials(
+private suspend fun LoggedInUsersRepository.setupMockUserWithCredentials(
     user: LoggedInUserBasicDetails,
     authServerUrl: String = "test.test",
-    clientId: String = "test"
+    clientId: String = mockClientId
 ) {
+    val oauthConfig = createMockOAuthConfig()
+
+    val token = createMockOAuthToken(
+        iss = oauthConfig.authServerMetadata.issuer,
+        sub = user.did.value,
+        clientId = oauthConfig.clientMetadata.clientId,
+        aud = Did.Web("did:web:pds.example.com"),
+        scope = oauthConfig.clientMetadata.scope
+    )
+
     saveOrUpdateLoggedInUser(user)
     saveOrUpdateOAuthCredentials(
         user.did,
-        accessToken = "test",
-        refreshToken = "test",
+        accessToken = token,
+        refreshToken = token,
         authorizationServerUrl = authServerUrl,
         clientId = clientId,
         keyPair = ECDSAP256InBase64Keys.generate()
     )
 }
 
-private data class TestOAuthConfig(
+private data class MockOAuthConfig(
     val clientMetadata: ClientMetadata,
     val authServerMetadata: AuthorizationServerMetadata,
     val par: ResponseWithDPoPNonce<PushedAuthorizationRequest>
 )
 
-private fun createTestOAuthConfig() = TestOAuthConfig(
+private fun createMockOAuthConfig() = MockOAuthConfig(
     clientMetadata = ClientMetadata(
-        clientId = "https://mock.client.id/client-metadata.json",
+        clientId = mockClientId,
         dpopBoundAccessTokens = true,
         grantTypes = listOf("authorization_code", "refresh_token"),
         redirectUris = listOf("https://mock.client.id/oauth2/callback"),
@@ -720,7 +783,7 @@ fun MockAuthenticationManager(
     oauthClient: ATProtoOAuthClient = ATProtoOAuthClient(
         _MockOAuthApi(),
         _MockAccountApi(),
-        "testid"
+        mockClientId
     )
 ) = AuthenticationManager(
     rootUserRepository = rootUserRepo,
@@ -763,3 +826,5 @@ fun createMockOAuthToken(
 
     return "$fakeHeader.$encodedPayload.$fakeSignature"
 }
+
+const val mockClientId = "https://mock.client.id/client-metadata.json"

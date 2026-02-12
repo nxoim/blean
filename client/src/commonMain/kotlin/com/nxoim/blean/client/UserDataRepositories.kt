@@ -25,7 +25,8 @@ class UserDataRepositories(
 ) {
     constructor(
         baseContentSpecificDbUri: String,
-        encryptionKey: ByteArray?
+        encryptionKey: ByteArray?,
+        mediaFileSystem: FileSystem = FileSystem.SYSTEM
     ) : this(
         buildRoomDatabase<SavedFeedsRoomDatabase>(
             basePathUri = baseContentSpecificDbUri,
@@ -48,7 +49,7 @@ class UserDataRepositories(
             encryptionKey = encryptionKey
         ),
         baseContentSpecificDbUri = baseContentSpecificDbUri,
-        mediaFileSystem = FileSystem.SYSTEM
+        mediaFileSystem = mediaFileSystem
     )
 
     val feeds = FeedsSettingsRepository(feedsDb.dao())
@@ -67,21 +68,14 @@ class UserDataRepositories(
 //        feeds.open()
 //        mutedWords.open()
 //        drafts.open()
+        mediaFileSystem.createDirectories(baseContentSpecificDbUri.toPath())
         draftMediaStorage.createFolderIfMissing()
     }
 
     suspend fun deinitialize() {
-//        feeds.close()
-//        mutedWords.close()
-//        drafts.close()
         feedsDb.close()
         mutedWordsDb.close()
         draftsDb.close()
         postInteractionsOutboxDb.close()
-    }
-
-    suspend fun deinitializeAndNuke() {
-        deinitialize()
-        mediaFileSystem.deleteRecursively(baseContentSpecificDbUri.toPath())
     }
 }

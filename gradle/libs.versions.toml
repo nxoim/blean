@@ -139,6 +139,8 @@ compose-materialIconsExtended = { module = "org.jetbrains.compose.material:mater
 
 androidxCollection = { module = "androidx.collection:collection", version.ref = "androidxCollection" }
 
+ktorMock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
+
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }
 androidLibrary = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }

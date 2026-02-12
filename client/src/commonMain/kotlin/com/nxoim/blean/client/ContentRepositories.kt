@@ -17,7 +17,8 @@ class ContentRepositories(
     constructor(
         baseContentSpecificDbUri: String,
         encryptionKey: ByteArray?,
-        logger: Logger
+        logger: Logger,
+        mediaFileSystem: FileSystem = FileSystem.SYSTEM
     ) : this(
         baseContentSpecificDbUri,
         logger,
@@ -26,7 +27,7 @@ class ContentRepositories(
             name = "apiResponseCache",
             encryptionKey = encryptionKey
         ),
-        FileSystem.SYSTEM
+        mediaFileSystem
     )
 
     val apiResponseCache = ApiResponseCache(
@@ -36,14 +37,10 @@ class ContentRepositories(
 
     fun initialize() {
 //        apiResponseCache.open()
+        mediaFileSystem.createDirectories(baseContentSpecificDbUri.toPath())
     }
 
     fun deinitialize() {
         apiResponseCacheDb.close()
-    }
-
-    fun deinitializeAndNuke() {
-        deinitialize()
-        mediaFileSystem.deleteRecursively(baseContentSpecificDbUri.toPath())
     }
 }
