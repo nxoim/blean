@@ -7,8 +7,8 @@ import com.nxoim.blean.api.api.oauthStuff.models.DPoPProof
 import com.nxoim.blean.api.api.oauthStuff.models.SignedJWTMessage
 import com.nxoim.blean.api.api.oauthStuff.models.UnsignedJWTMessage
 import com.nxoim.blean.api.api.oauthStuff.models.pdsUrlOrThrow
+import com.nxoim.blean.api.api.oauthStuff.utils.internal.containsInvalidTokenError
 import com.nxoim.blean.api.api.oauthStuff.utils.internal.getDpopNonceFromHeaders
-import com.nxoim.blean.api.api.oauthStuff.utils.internal.headersContainInvalidTokenError
 import com.nxoim.blean.api.api.oauthStuff.utils.internal.headersContainUseDpopNonceError
 import com.nxoim.blean.api.utils.AuthenticationMethod
 import io.ktor.client.statement.HttpResponse
@@ -91,7 +91,7 @@ class PDSRequestDPoPAuthenticationContext(
                 )
             }
 
-            response.headersContainInvalidTokenError() -> {
+            response.containsInvalidTokenError() -> {
                 logger.i(tag = logTag) { "Invalid token error" }
                 val refreshJob = this.onInvalidAuthToken().await()
 
